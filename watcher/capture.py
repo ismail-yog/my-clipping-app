@@ -1,7 +1,6 @@
 """
 StreamClipper — Stream Capture
-Captures live streams into a rolling buffer of video segments using
-streamlink (or yt-dlp) piped into FFmpeg.
+Records live streams in 1080p using a rolling buffer.
 """
 
 import os
@@ -20,181 +19,262 @@ logger = logging.getLogger("streamclipper.capture")
 
 class StreamCapture:
     """
-    Captures a live stream into a rolling buffer of short video segments.
-
-    Uses streamlink to grab the HLS stream and FFmpeg to write segment files.
-    Older segments are automatically cleaned up to stay within the buffer window.
+    Captures live stream footage in short segments to a rolling buffer.
+    Pipes streamlink output into FFmpeg to write segment files, cleans up older files.
     """
 
-    def __init__(
-        self,
-        streamer: config.StreamerConfig,
-        output_dir: Optional[Path] = None,
-        settings: Optional[config.CaptureSettings] = None,
-    ):
+    def __init__(self, streamer: config.StreamerConfig):
         self.streamer = streamer
-        self.settings = settings or config.capture_settings
-        self.output_dir = output_dir or (
-            config.CLIPS_DIR / "buffer" / streamer.channel
-        )
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        self._streamlink_proc: Optional[subprocess.Popen] = None
-        self._ffmpeg_proc: Optional[subprocess.Popen] = None
-        self._cleanup_thread: Optional[threading.Thread] = None
+        self.settings = config.capture_settings
         self._running = False
-        self._started_at: Optional[float] = None
+        self._capture_thread: Optional[threading.Thread] = None
+        self._cleanup_thread: Optional[threading.Thread] = None
+        self._buffer_dir: Optional[Path] = None
         self._lock = threading.Lock()
 
     @property
     def is_capturing(self) -> bool:
-        return self._running
-
-    @property
-    def segment_pattern(self) -> str:
-        """Glob pattern for segment files."""
-        return str(self.output_dir / "seg_*.ts")
-
-    @property
-    def audio_dir(self) -> Path:
-        """Directory for extracted audio chunks."""
-        d = self.output_dir / "audio"
-        d.mkdir(exist_ok=True)
-        return d
+        """Indicate if the capture loop is actively running."""
+        with self._lock:
+            return self._running
 
     def start(self):
-        """Begin capturing the stream."""
+        """Begin recording the live stream into the rolling buffer."""
         with self._lock:
             if self._running:
-                logger.warning("Capture already running for %s", self.streamer.name)
+                logger.warning("[%s] Capture is already running.", self.streamer.name)
                 return
-
             self._running = True
-            self._started_at = time.time()
+
+        # Create unique buffer directory for this capture session
+        self._buffer_dir = config.RAW_DIR / f"{self.streamer.name}_{int(time.time())}"
+        self._buffer_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(
-            "Starting capture for %s (%s) — quality=%s, segment=%ds",
+            "[%s] Starting capture on %s (quality=%s, segment=%ds, window=%ds)",
             self.streamer.name,
             self.streamer.url,
             self.settings.stream_quality,
             self.settings.segment_duration,
+            self.settings.buffer_window,
         )
 
-        # Start capture in background thread
-        capture_thread = threading.Thread(target=self._run_capture, daemon=True)
-        capture_thread.start()
+        # Spawn background capture worker thread
+        self._capture_thread = threading.Thread(
+            target=self._capture_worker,
+            name="_capture_loop",
+            daemon=True
+        )
+        self._capture_thread.start()
 
-        # Start cleanup in background thread
-        self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
+        # Spawn background cleanup loop thread
+        self._cleanup_thread = threading.Thread(
+            target=self._cleanup_loop,
+            daemon=True
+        )
         self._cleanup_thread.start()
 
     def stop(self):
-        """Stop capturing the stream."""
+        """Stop recording and log buffer statistics."""
         with self._lock:
+            if not self._running:
+                return
             self._running = False
 
-        # Terminate processes
-        for proc_name, proc in [
-            ("streamlink", self._streamlink_proc),
-            ("ffmpeg", self._ffmpeg_proc),
-        ]:
-            if proc and proc.poll() is None:
-                logger.debug("Terminating %s process", proc_name)
+        # Wait for threads to finish
+        if self._capture_thread:
+            self._capture_thread.join(timeout=5)
+            self._capture_thread = None
+        if self._cleanup_thread:
+            self._cleanup_thread.join(timeout=5)
+            self._cleanup_thread = None
+
+        # Calculate buffer stats (total segments, total size)
+        total_segments = 0
+        total_size = 0
+        if self._buffer_dir and self._buffer_dir.exists():
+            for filepath in self._buffer_dir.glob("seg_*.ts"):
+                total_segments += 1
                 try:
+                    total_size += filepath.stat().st_size
+                except Exception:
+                    pass
+
+        size_mb = total_size / (1024 * 1024)
+        logger.info(
+            "[%s] Capture stopped. Buffer stats: %d segments, %.2f MB",
+            self.streamer.name,
+            total_segments,
+            size_mb,
+        )
+
+    def _capture_worker(self):
+        """Worker loop that retrieves stream URLs and segments footage."""
+        while True:
+            with self._lock:
+                if not self._running:
+                    break
+
+            # 1. Get stream URL via streamlink (retries 3 times with 5s delay)
+            stream_url = None
+            for attempt in range(3):
+                with self._lock:
+                    if not self._running:
+                        break
+                stream_url = self._get_stream_url()
+                if stream_url:
+                    break
+                logger.warning(
+                    "[%s] Failed to get stream URL. Retrying in 5s... (Attempt %d/3)",
+                    self.streamer.name,
+                    attempt + 1,
+                )
+                time.sleep(5)
+
+            if not stream_url:
+                logger.error(
+                    "[%s] Failed to resolve stream URL after 3 attempts. Retrying in 10s...",
+                    self.streamer.name,
+                )
+                time.sleep(10)
+                continue
+
+            # 2. Run FFmpeg to read stream and write segment files
+            segment_pattern = str(self._buffer_dir / "seg_%05d.ts")
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-i", stream_url,
+                "-c", "copy",
+                "-f", "segment",
+                "-segment_time", str(self.settings.segment_duration),
+                "-reset_timestamps", "1",
+                segment_pattern
+            ]
+
+            logger.info("[%s] Segmenting stream into buffer...", self.streamer.name)
+            try:
+                proc = subprocess.Popen(
+                    ffmpeg_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+
+                while True:
+                    with self._lock:
+                        if not self._running:
+                            break
+                    # If ffmpeg terminated or crashed, break to restart
+                    if proc.poll() is not None:
+                        break
+                    time.sleep(1)
+
+                # Cleanup processes on loop break or stop
+                if proc.poll() is None:
                     proc.terminate()
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                else:
+                    ret = proc.returncode
+                    if ret != 0:
+                        stderr = ""
+                        if proc.stderr:
+                            stderr = proc.stderr.read().decode("utf-8", errors="replace")[-300:]
+                        logger.error(
+                            "[%s] FFmpeg crashed with exit code %d. Error: %s",
+                            self.streamer.name,
+                            ret,
+                            stderr,
+                        )
+                        logger.info("[%s] Restarting capture from current time...", self.streamer.name)
+            except Exception as e:
+                logger.error("[%s] Exception in capture execution: %s", self.streamer.name, e)
+                time.sleep(2)
 
-        logger.info("Capture stopped for %s", self.streamer.name)
+    def get_buffer_files(self, last_n_seconds: int = 30) -> list[Path]:
+        """Return a sorted list of segments covering the last N seconds."""
+        if not self._buffer_dir or not self._buffer_dir.exists():
+            return []
 
-    def get_buffer_files(self, last_n_seconds: Optional[int] = None) -> list[Path]:
+        files = list(self._buffer_dir.glob("seg_*.ts"))
+        # Sort chronologically by modification time
+        files.sort(key=lambda f: f.stat().st_mtime)
+
+        cutoff = time.time() - last_n_seconds
+        return [f for f in files if f.stat().st_mtime >= cutoff]
+
+    def get_concat_file(self, start_time: float, duration: float) -> Optional[Path]:
         """
-        Get sorted list of buffer segment files.
-        If last_n_seconds is specified, only return segments from that window.
-        """
-        files = sorted(Path(f) for f in glob.glob(self.segment_pattern))
-
-        if last_n_seconds and files:
-            cutoff = time.time() - last_n_seconds
-            files = [f for f in files if f.stat().st_mtime >= cutoff]
-
-        return files
-
-    def get_concat_file(self, start_time: float, duration: int) -> Optional[Path]:
-        """
-        Create a concatenated video file from buffer segments covering
-        the time window [start_time, start_time + duration].
-
+        Concatenate buffer segments covering the time window [start_time, start_time + duration].
         Returns the path to the concatenated file, or None on failure.
         """
-        segments = self.get_buffer_files()
+        # Fetch segments up to the time duration requested plus extra window to be safe
+        segments = self.get_buffer_files(last_n_seconds=int(time.time() - start_time + 10))
         if not segments:
-            logger.warning("No buffer segments available")
+            logger.warning("[%s] No segments available in buffer for concatenation.", self.streamer.name)
             return None
 
-        # Filter segments by modification time
+        # Filter segments that match the exact start time and duration bounds (with 10s padding)
         selected = []
         for seg in segments:
             try:
                 mtime = seg.stat().st_mtime
-                if mtime >= start_time and mtime <= start_time + duration + 30:
+                if mtime >= start_time - 10 and mtime <= start_time + duration + 10:
                     selected.append(seg)
             except OSError:
                 continue
 
         if not selected:
-            # Fall back to most recent segments
-            n_segments = max(1, duration // self.settings.segment_duration + 2)
+            # Fallback to the most recent segments covering the duration
+            n_segments = max(1, int(duration // self.settings.segment_duration) + 2)
             selected = segments[-n_segments:]
             logger.info(
-                "No segments matched time window, using last %d segments",
+                "[%s] No segments matched time bounds, using last %d segments as fallback",
+                self.streamer.name,
                 len(selected),
             )
 
-        # Create concat list file
-        concat_list = self.output_dir / "concat_list.txt"
-        with open(concat_list, "w") as f:
-            for seg in selected:
-                f.write(f"file '{seg.resolve()}'\n")
-
-        # Concatenate with FFmpeg
-        output_file = self.output_dir / f"concat_{int(time.time())}.mp4"
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(concat_list),
-            "-c", "copy",
-            "-movflags", "+faststart",
-            str(output_file),
-        ]
-
+        # Create text file for ffmpeg concat demuxer
+        concat_list_path = self._buffer_dir / "concat_list.txt"
         try:
+            with open(concat_list_path, "w", encoding="utf-8") as f:
+                for seg in selected:
+                    escaped_path = str(seg.resolve()).replace("'", "'\\''")
+                    f.write(f"file '{escaped_path}'\n")
+
+            output_file = config.TEMP_MEDIA_DIR / f"concat_{self.streamer.name}_{int(time.time())}.mp4"
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_list_path),
+                "-c", "copy",
+                "-movflags", "+faststart",
+                str(output_file),
+            ]
+
             result = subprocess.run(
-                cmd,
+                ffmpeg_cmd,
                 capture_output=True,
                 text=True,
                 timeout=60,
             )
             if result.returncode == 0 and output_file.exists():
-                logger.info("Concatenated %d segments → %s", len(selected), output_file)
+                logger.info("[%s] Concatenated %d segments to %s", self.streamer.name, len(selected), output_file.name)
                 return output_file
             else:
-                logger.error("FFmpeg concat failed: %s", result.stderr[-500:])
-                return None
-        except subprocess.TimeoutExpired:
-            logger.error("FFmpeg concat timed out")
-            return None
+                logger.error("[%s] FFmpeg concat failed: %s", self.streamer.name, result.stderr)
+        except Exception as e:
+            logger.error("[%s] Concatenate error: %s", self.streamer.name, e)
+
+        return None
 
     def extract_audio(self, video_path: Path) -> Optional[Path]:
-        """Extract audio from a video file to WAV format."""
-        audio_path = self.audio_dir / f"{video_path.stem}.wav"
-
-        cmd = [
-            "ffmpeg",
-            "-y",
+        """Extract audio to a 16kHz mono WAV file (required for Whisper)."""
+        audio_path = video_path.with_suffix(".wav")
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
             "-i", str(video_path),
             "-vn",
             "-acodec", "pcm_s16le",
@@ -202,10 +282,9 @@ class StreamCapture:
             "-ac", "1",
             str(audio_path),
         ]
-
         try:
             result = subprocess.run(
-                cmd,
+                ffmpeg_cmd,
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -213,108 +292,64 @@ class StreamCapture:
             if result.returncode == 0 and audio_path.exists():
                 return audio_path
             else:
-                logger.error("Audio extraction failed: %s", result.stderr[-300:])
-                return None
-        except subprocess.TimeoutExpired:
-            logger.error("Audio extraction timed out")
-            return None
+                logger.error("[%s] Audio extraction failed: %s", self.streamer.name, result.stderr)
+        except Exception as e:
+            logger.error("[%s] Exception during audio extraction: %s", self.streamer.name, e)
+        return None
 
-    def _run_capture(self):
-        """
-        Main capture pipeline: streamlink → pipe → FFmpeg → segments.
-        Runs in a background thread.
-        """
-        while self._running:
-            try:
-                self._start_pipeline()
-            except Exception as e:
-                logger.error("Capture pipeline error for %s: %s", self.streamer.name, e)
-
-            if self._running:
-                logger.info("Restarting capture in 5s for %s...", self.streamer.name)
-                time.sleep(5)
-
-    def _start_pipeline(self):
-        """Start the streamlink → FFmpeg pipeline."""
-        segment_path = str(self.output_dir / "seg_%06d.ts")
-
-        # Streamlink command: pipe stream to stdout
-        streamlink_cmd = [
-            "streamlink",
-            self.streamer.url,
-            self.settings.stream_quality,
-            "--stdout",
-            "--twitch-disable-ads",
-            "--retry-streams", "5",
-            "--retry-max", "3",
-        ]
-
-        # FFmpeg command: read from stdin, write segments
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-y",
-            "-i", "pipe:0",
-            "-c", "copy",
-            "-f", "segment",
-            "-segment_time", str(self.settings.segment_duration),
-            "-reset_timestamps", "1",
-            "-strftime", "0",
-            segment_path,
-        ]
-
-        logger.debug("Starting streamlink: %s", " ".join(streamlink_cmd))
-        logger.debug("Starting FFmpeg: %s", " ".join(ffmpeg_cmd))
-
-        # Start streamlink
-        self._streamlink_proc = subprocess.Popen(
-            streamlink_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-        # Start FFmpeg, reading from streamlink's stdout
-        self._ffmpeg_proc = subprocess.Popen(
-            ffmpeg_cmd,
-            stdin=self._streamlink_proc.stdout,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-        # Allow streamlink to receive SIGPIPE if FFmpeg exits
-        if self._streamlink_proc.stdout:
-            self._streamlink_proc.stdout.close()
-
-        # Wait for FFmpeg to finish (blocks until stream ends or error)
-        self._ffmpeg_proc.wait()
-
-        if self._ffmpeg_proc.returncode != 0 and self._running:
-            stderr = ""
-            if self._ffmpeg_proc.stderr:
-                stderr = self._ffmpeg_proc.stderr.read().decode("utf-8", errors="replace")[-500:]
-            logger.warning("FFmpeg exited with code %d: %s", self._ffmpeg_proc.returncode, stderr)
+    def _get_stream_url(self) -> Optional[str]:
+        """Query streamlink to resolve the live stream HLS manifest URL."""
+        cmd = ["streamlink", "--get-url", self.streamer.url, self.settings.stream_quality]
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode == 0:
+                url = result.stdout.strip()
+                if url.startswith("http"):
+                    return url
+            logger.debug("[%s] Streamlink get-url stderr: %s", self.streamer.name, result.stderr)
+        except Exception as e:
+            logger.error("[%s] Exception querying streamlink: %s", self.streamer.name, e)
+        return None
 
     def _cleanup_loop(self):
-        """Periodically remove old segment files outside the buffer window."""
-        while self._running:
+        """Background thread loop that regularly executes segment cleanup."""
+        while True:
+            with self._lock:
+                if not self._running:
+                    break
+
             try:
                 self._cleanup_old_segments()
             except Exception as e:
-                logger.debug("Cleanup error: %s", e)
+                logger.debug("[%s] Cleanup loop error: %s", self.streamer.name, e)
 
-            time.sleep(self.settings.segment_duration)
+            # Sleep in small 1-second chunks to exit promptly on stop
+            for _ in range(30):
+                with self._lock:
+                    if not self._running:
+                        break
+                time.sleep(1)
 
     def _cleanup_old_segments(self):
-        """Remove segments older than the buffer window."""
-        cutoff = time.time() - self.settings.buffer_window
-        removed = 0
+        """Delete segment files older than the configured buffer window."""
+        if not self._buffer_dir or not self._buffer_dir.exists():
+            return
 
-        for filepath in glob.glob(self.segment_pattern):
+        cutoff = time.time() - self.settings.buffer_window
+        removed_count = 0
+
+        for filepath in self._buffer_dir.glob("seg_*.ts"):
             try:
-                if os.path.getmtime(filepath) < cutoff:
-                    os.remove(filepath)
-                    removed += 1
-            except OSError:
+                if filepath.stat().st_mtime < cutoff:
+                    filepath.unlink(missing_ok=True)
+                    removed_count += 1
+            except Exception:
                 pass
 
-        if removed > 0:
-            logger.debug("Cleaned up %d old segments for %s", removed, self.streamer.name)
+        if removed_count > 0:
+            logger.debug("[%s] Deleted %d segments outside buffer window.", self.streamer.name, removed_count)
