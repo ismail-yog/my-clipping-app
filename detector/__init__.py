@@ -1,0 +1,1 @@
+"""StreamClipper — Detector package."""

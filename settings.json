@@ -1,0 +1,10 @@
+{
+  "max_clips": 15,
+  "clip_duration": 45,
+  "download_resolution": 1080,
+  "parallel_renders": 2,
+  "use_fast_whisper": true,
+  "burn_captions": true,
+  "viral_threshold": 0.8,
+  "auto_publish": false
+}

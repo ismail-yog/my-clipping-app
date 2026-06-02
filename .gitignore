@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Databases and locks
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Environment and sensitive secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+client_secrets.json
+youtube_token.json
+
+# Logs
+*.log
+logs/
+backend_stdout.log
+backend_stderr.log
+frontend/frontend_stdout.log
+frontend/frontend_stderr.log
+
+# Media / Clip directories (buffers and renders)
+raw/
+clips/
+shorts/
+thumbs/
+temp/
+
+# Node/Next.js (Frontend)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+
+# OS specific files
+.DS_Store
+Thumbs.db

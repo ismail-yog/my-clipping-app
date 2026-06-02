@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamClip AI — Dashboard</title>
+    <meta name="description" content="StreamClip AI autonomous highlight pipeline dashboard — monitor streams, review clips, manage uploads">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header" id="main-header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">⚡</span>
+                <h1>StreamClip<span class="logo-ai">AI</span></h1>
+            </div>
+            <span class="badge badge-version">v2.0</span>
+        </div>
+        <div class="header-right">
+            <div class="status-indicator" id="connection-status">
+                <span class="status-dot"></span>
+                <span class="status-text">Connected</span>
+            </div>
+            <span class="timestamp" id="last-update">--:--:--</span>
+        </div>
+    </header>
+
+    <!-- Tab Navigation -->
+    <nav class="tab-nav" id="tab-nav">
+        <button class="tab-btn active" data-tab="streamers" id="tab-btn-streamers">
+            <span class="tab-icon">📡</span>
+            <span class="tab-label">Streamers</span>
+        </button>
+        <button class="tab-btn" data-tab="pipeline" id="tab-btn-pipeline">
+            <span class="tab-icon">⚙️</span>
+            <span class="tab-label">Pipeline</span>
+        </button>
+        <button class="tab-btn" data-tab="clips" id="tab-btn-clips">
+            <span class="tab-icon">🎬</span>
+            <span class="tab-label">Clips</span>
+            <span class="tab-badge" id="clips-badge" style="display:none">0</span>
+        </button>
+        <button class="tab-btn" data-tab="uploads" id="tab-btn-uploads">
+            <span class="tab-icon">📤</span>
+            <span class="tab-label">Uploads</span>
+        </button>
+        <button class="tab-btn" data-tab="settings" id="tab-btn-settings">
+            <span class="tab-icon">⚙️</span>
+            <span class="tab-label">Settings</span>
+        </button>
+        <div class="tab-indicator" id="tab-indicator"></div>
+    </nav>
+
+    <!-- Stats Bar -->
+    <section class="stats-bar" id="stats-section">
+        <div class="stat-card" id="stat-active">
+            <div class="stat-icon">🟢</div>
+            <div class="stat-info">
+                <span class="stat-value" id="active-count">0</span>
+                <span class="stat-label">Live Streams</span>
+            </div>
+        </div>
+        <div class="stat-card" id="stat-pipelines">
+            <div class="stat-icon">⚡</div>
+            <div class="stat-info">
+                <span class="stat-value" id="pipeline-count">0</span>
+                <span class="stat-label">Pipelines</span>
+            </div>
+        </div>
+        <div class="stat-card" id="stat-clips">
+            <div class="stat-icon">🎬</div>
+            <div class="stat-info">
+                <span class="stat-value" id="clips-count">0</span>
+                <span class="stat-label">Total Clips</span>
+            </div>
+        </div>
+        <div class="stat-card" id="stat-pending">
+            <div class="stat-icon">⏳</div>
+            <div class="stat-info">
+                <span class="stat-value" id="pending-count">0</span>
+                <span class="stat-label">Pending Review</span>
+            </div>
+        </div>
+        <div class="stat-card" id="stat-uploads">
+            <div class="stat-icon">📤</div>
+            <div class="stat-info">
+                <span class="stat-value" id="uploads-count">0/6</span>
+                <span class="stat-label">Uploads Today</span>
+            </div>
+        </div>
+        <div class="stat-card" id="stat-queue">
+            <div class="stat-icon">📋</div>
+            <div class="stat-info">
+                <span class="stat-value" id="queue-count">0</span>
+                <span class="stat-label">Queue</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+        <!-- Tab: Streamers -->
+        <section class="tab-content active" id="tab-streamers">
+            <div class="section-header">
+                <h2 class="section-title">
+                    <span class="section-icon">📡</span> Monitored Streamers
+                </h2>
+                <button class="btn btn-primary" id="add-streamer-btn" onclick="showAddStreamer()">
+                    <span>+</span> Add Streamer
+                </button>
+            </div>
+
+            <!-- Add Streamer Form -->
+            <div class="form-card" id="add-streamer-form" style="display:none">
+                <h3>Add New Streamer</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="streamer-name">Name</label>
+                        <input type="text" id="streamer-name" placeholder="e.g. xqc" class="input">
+                    </div>
+                    <div class="form-group">
+                        <label for="streamer-platform">Platform</label>
+                        <select id="streamer-platform" class="input">
+                            <option value="kick">Kick</option>
+                            <option value="twitch">Twitch</option>
+                            <option value="youtube">YouTube</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="streamer-channel">Channel</label>
+                        <input type="text" id="streamer-channel" placeholder="e.g. xqc" class="input">
+                    </div>
+                    <div class="form-group">
+                        <label for="streamer-url">URL</label>
+                        <input type="text" id="streamer-url" placeholder="e.g. https://kick.com/xqc" class="input">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="streamer-auto-approve"> Auto-approve clips
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button class="btn btn-secondary" onclick="hideAddStreamer()">Cancel</button>
+                    <button class="btn btn-primary" onclick="addStreamer()">Add Streamer</button>
+                </div>
+            </div>
+
+            <div class="streamers-grid" id="streamers-grid">
+                <div class="empty-state" id="no-streamers">
+                    <span class="empty-icon">📺</span>
+                    <p>No streamers configured</p>
+                    <p class="empty-hint">Click "Add Streamer" to get started</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab: Pipeline -->
+        <section class="tab-content" id="tab-pipeline">
+            <div class="section-header">
+                <h2 class="section-title">
+                    <span class="section-icon">⚙️</span> Pipeline Status
+                </h2>
+                <span class="section-badge live-badge" id="pipeline-badge">Live</span>
+            </div>
+
+            <!-- Active Pipelines -->
+            <div class="pipeline-grid" id="pipeline-grid">
+                <div class="empty-state">
+                    <span class="empty-icon">💤</span>
+                    <p>No active pipelines</p>
+                    <p class="empty-hint">Pipelines start automatically when streamers go live</p>
+                </div>
+            </div>
+
+            <!-- Moment Score Chart -->
+            <div class="card chart-card">
+                <h3>Moment Scores <span class="live-dot"></span></h3>
+                <div class="chart-container" id="score-chart">
+                    <canvas id="score-canvas" width="800" height="200"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <span class="legend-item"><span class="legend-dot audio"></span> Audio</span>
+                    <span class="legend-item"><span class="legend-dot chat"></span> Chat</span>
+                    <span class="legend-item"><span class="legend-dot sentiment"></span> Sentiment</span>
+                    <span class="legend-item"><span class="legend-dot combined"></span> Combined</span>
+                    <span class="legend-item"><span class="legend-dot threshold"></span> Threshold</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab: Clips -->
+        <section class="tab-content" id="tab-clips">
+            <div class="section-header">
+                <h2 class="section-title">
+                    <span class="section-icon">🎬</span> Clip Review Queue
+                </h2>
+                <div class="filter-group">
+                    <select id="clips-filter" class="input input-sm" onchange="loadClips()">
+                        <option value="">All Clips</option>
+                        <option value="pending_review" selected>Pending Review</option>
+                        <option value="approved">Approved</option>
+                        <option value="uploaded">Uploaded</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="clips-list" id="clips-list">
+                <div class="empty-state" id="no-clips">
+                    <span class="empty-icon">🎞️</span>
+                    <p>No clips yet</p>
+                    <p class="empty-hint">Clips will appear here when highlights are detected</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab: Uploads -->
+        <section class="tab-content" id="tab-uploads">
+            <div class="section-header">
+                <h2 class="section-title">
+                    <span class="section-icon">📤</span> Upload History
+                </h2>
+                <div class="quota-bar" id="quota-bar">
+                    <span class="quota-text"><span id="quota-used">0</span>/6 today</span>
+                    <div class="quota-track">
+                        <div class="quota-fill" id="quota-fill" style="width:0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="uploads-list" id="uploads-list">
+                <div class="empty-state">
+                    <span class="empty-icon">☁️</span>
+                    <p>No uploads yet</p>
+                    <p class="empty-hint">Approved clips will be uploaded to YouTube Shorts</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab: Settings -->
+        <section class="tab-content" id="tab-settings">
+            <div class="section-header">
+                <h2 class="section-title">
+                    <span class="section-icon">⚙️</span> System Settings
+                </h2>
+            </div>
+
+            <div class="settings-grid">
+                <div class="card settings-card">
+                    <h3>🤖 AI Engine</h3>
+                    <div class="settings-info">
+                        <div class="setting-row">
+                            <span class="setting-label">Provider</span>
+                            <span class="setting-value" id="setting-ai-provider">Ollama (local)</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Model</span>
+                            <span class="setting-value" id="setting-ai-model">—</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Cost</span>
+                            <span class="setting-value cost-free">$0 / month</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card settings-card">
+                    <h3>🎤 Whisper</h3>
+                    <div class="settings-info">
+                        <div class="setting-row">
+                            <span class="setting-label">Model</span>
+                            <span class="setting-value" id="setting-whisper-model">—</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Device</span>
+                            <span class="setting-value" id="setting-whisper-device">—</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card settings-card">
+                    <h3>🎯 Detection</h3>
+                    <div class="settings-info">
+                        <div class="setting-row">
+                            <span class="setting-label">Threshold</span>
+                            <span class="setting-value" id="setting-threshold">0.65</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Cooldown</span>
+                            <span class="setting-value" id="setting-cooldown">120s</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Weights</span>
+                            <span class="setting-value" id="setting-weights">A:0.3 C:0.4 S:0.3</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card settings-card">
+                    <h3>🎬 Clips</h3>
+                    <div class="settings-info">
+                        <div class="setting-row">
+                            <span class="setting-label">Duration</span>
+                            <span class="setting-value" id="setting-clip-duration">30–90s</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Resolution</span>
+                            <span class="setting-value">1080×1920 (9:16)</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Codec</span>
+                            <span class="setting-value">H.264 / AAC</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card settings-card">
+                    <h3>📤 Upload</h3>
+                    <div class="settings-info">
+                        <div class="setting-row">
+                            <span class="setting-label">Daily Limit</span>
+                            <span class="setting-value" id="setting-upload-limit">6 / day</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">API</span>
+                            <span class="setting-value">YouTube Data v3</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Cost</span>
+                            <span class="setting-value cost-free">$0 (free tier)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card settings-card">
+                    <h3>📋 Queue</h3>
+                    <div class="settings-info">
+                        <div class="setting-row">
+                            <span class="setting-label">Engine</span>
+                            <span class="setting-value">SQLite (local)</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Poll Interval</span>
+                            <span class="setting-value" id="setting-queue-poll">5s</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Max Retries</span>
+                            <span class="setting-value">3</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>StreamClip AI — Zero-Cost Autonomous Highlight Pipeline</p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
