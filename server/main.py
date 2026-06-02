@@ -18,7 +18,7 @@ import config
 from database import Database
 from task_queue import TaskQueue
 from server.deps import get_db, get_pipeline_manager, get_task_queue
-from server.routes import auth, settings, ws
+from server.routes import auth, settings, ws, status, streamers, clips, uploads, jobs, vod
 
 # Logger matching specification
 logger = logging.getLogger("streamclipper.server")
@@ -334,6 +334,12 @@ async def health():
 # ── Include Modular Sub-Routers ─────────────────────────────────────────────
 
 app.include_router(ws.router, tags=["WebSocket"])
+app.include_router(status.router, prefix="/api", tags=["Status"])
+app.include_router(streamers.router, prefix="/api", tags=["Streamers"])
+app.include_router(clips.router, prefix="/api", tags=["Clips"])
+app.include_router(uploads.router, prefix="/api", tags=["Uploads"])
+app.include_router(jobs.router, prefix="/api", tags=["Jobs"])
+app.include_router(vod.router, prefix="/api/vod", tags=["VOD"])
 app.include_router(auth.router, prefix="/api", tags=["Auth"])
 app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
 
