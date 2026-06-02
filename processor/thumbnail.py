@@ -1,328 +1,191 @@
 """
 StreamClipper — Thumbnail Generator
-Extracts the best frame from a clip and overlays bold text
-to create eye-catching YouTube Shorts thumbnails.
-Uses ffmpeg for frame extraction and PIL/Pillow for text compositing.
+Extracts a frame from the clip, overlays bold text, adds visual effects (zoom, contrast),
+and saves it as a 1280x720 JPG.
 """
 
 import logging
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Optional
 
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+
 import config
 
-logger = logging.getLogger("streamclipper.thumbnail")
-
-# Directory for thumbnail output
-THUMBS_DIR = config.BASE_DIR / "thumbs"
-THUMBS_DIR.mkdir(exist_ok=True)
+logger = logging.getLogger("streamclipper.processor.thumbnail")
 
 
 class ThumbnailGenerator:
     """
-    Generates YouTube-optimized thumbnails for clips.
-
-    1. Extracts the best frame (at peak moment) via ffmpeg
-    2. Overlays bold text using PIL/Pillow
-    3. Outputs a 1280x720 JPEG thumbnail
+    Generates YouTube-optimized thumbnails from video clip frames.
     """
 
     def __init__(self):
-        self.width: int = 1280
-        self.height: int = 720
-        self.quality: int = 90  # JPEG quality
+        # Read settings from config.thumbnail_settings
+        self.width = getattr(config.thumbnail_settings, "width", 1280)
+        self.height = getattr(config.thumbnail_settings, "height", 720)
+        self.quality = getattr(config.thumbnail_settings, "quality", 90)
+        self.frame_timestamp = getattr(config.thumbnail_settings, "frame_timestamp", 1.5)
 
-    def generate(
-        self,
-        clip_path: Path,
-        title_text: str,
-        streamer_name: str = "",
-        timestamp: float = 1.5,  # seconds into clip for best frame
-        output_path: Optional[Path] = None,
-    ) -> Optional[Path]:
+    def generate(self, clip_path: Path, title_text: str, streamer_name: str) -> Optional[Path]:
         """
-        Generate a thumbnail for a clip.
-
-        Args:
-            clip_path: Path to the clip video
-            title_text: Bold text to overlay (e.g. "INSANE PLAY")
-            streamer_name: Streamer name for branding
-            timestamp: Time in seconds to extract the frame from
-            output_path: Custom output path. Defaults to thumbs/<clip_stem>.jpg
-
-        Returns:
-            Path to the generated thumbnail, or None on failure.
+        Extract frame from clip, add text overlays, apply enhancements, and save to output path.
         """
         if not clip_path.exists():
-            logger.error("Clip not found: %s", clip_path)
+            logger.error("Source clip path not found: %s", clip_path)
             return None
 
-        if not output_path:
-            output_path = THUMBS_DIR / f"{clip_path.stem}_thumb.jpg"
+        # Output path: config.THUMBS_DIR / f"{clip_path.stem}.jpg"
+        output_path = config.THUMBS_DIR / f"{clip_path.stem}.jpg"
+        temp_png = config.THUMBS_DIR / f"{clip_path.stem}_temp_frame.png"
 
         try:
-            # Step 1: Extract frame via ffmpeg
-            frame_path = self._extract_frame(clip_path, timestamp)
-            if not frame_path:
+            # 1. Extract frame at frame_timestamp
+            success = self._extract_frame(clip_path, temp_png)
+            if not success or not temp_png.exists():
+                logger.error("Failed to extract frame for thumbnail")
                 return None
 
-            # Step 2: Overlay text using PIL
-            result = self._compose_thumbnail(
-                frame_path, output_path, title_text, streamer_name
-            )
-
-            # Cleanup temp frame
-            try:
-                frame_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-            if result:
-                logger.info("🖼️ Thumbnail generated: %s", output_path.name)
-
-            return result
+            # 2. Add text overlay and enhance image
+            result_path = self._add_text_overlay(temp_png, title_text, streamer_name, output_path)
+            return result_path
 
         except Exception as e:
-            logger.error("Thumbnail generation failed: %s", e)
+            logger.error("Exception during thumbnail generation: %s", e, exc_info=True)
             return None
+        finally:
+            # Cleanup temp png frame
+            if temp_png.exists():
+                try:
+                    temp_png.unlink()
+                except Exception:
+                    pass
 
-    def _extract_frame(
-        self, clip_path: Path, timestamp: float
-    ) -> Optional[Path]:
-        """Extract a single frame from the clip at the given timestamp."""
-        frame_path = Path(tempfile.mktemp(suffix=".png"))
-
+    def _extract_frame(self, video_path: Path, output_path: Path) -> bool:
+        """Extract a single frame from the video at the configured timestamp using FFmpeg."""
         cmd = [
             "ffmpeg", "-y",
-            "-ss", str(max(0, timestamp)),
-            "-i", str(clip_path),
+            "-ss", str(self.frame_timestamp),
+            "-i", str(video_path),
             "-vframes", "1",
-            "-vf", f"scale={self.width}:{self.height}:force_original_aspect_ratio=increase,"
-                   f"crop={self.width}:{self.height}",
-            str(frame_path),
+            "-q:v", "2",
+            str(output_path)
         ]
-
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            return r.returncode == 0
+        except Exception as e:
+            logger.error("FFmpeg frame extraction failed: %s", e)
+            return False
 
-            if result.returncode != 0:
-                logger.error("Frame extraction failed: %s", result.stderr[-200:])
-                return None
-
-            if frame_path.exists():
-                return frame_path
-
-            return None
-
-        except subprocess.TimeoutExpired:
-            logger.error("Frame extraction timed out")
-            return None
-
-    def _compose_thumbnail(
-        self,
-        frame_path: Path,
-        output_path: Path,
-        title_text: str,
-        streamer_name: str,
-    ) -> Optional[Path]:
-        """Compose the final thumbnail with text overlays using PIL."""
+    def _add_text_overlay(self, image_path: Path, text: str, streamer_name: str, output_path: Path) -> Optional[Path]:
+        """Open the frame image, resize, apply dark gradient, write stroke/shadow text, enhance colors, and save."""
         try:
-            from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
-        except ImportError:
-            logger.warning("Pillow not installed — using ffmpeg-only thumbnail")
-            return self._compose_ffmpeg_fallback(
-                frame_path, output_path, title_text, streamer_name
-            )
+            img = Image.open(image_path).convert("RGB")
+            
+            # Resize to target resolution (1280x720) if needed
+            if img.size != (self.width, self.height):
+                img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
 
-        try:
-            # Open the extracted frame
-            img = Image.open(frame_path).convert("RGB")
-            img = img.resize((self.width, self.height), Image.LANCZOS)
-
-            # Boost contrast slightly for more visual pop
-            enhancer = ImageEnhance.Contrast(img)
-            img = enhancer.enhance(1.15)
-
-            enhancer = ImageEnhance.Color(img)
-            img = enhancer.enhance(1.1)
-
-            draw = ImageDraw.Draw(img)
-
-            # Load fonts (try system fonts, fall back to default)
-            title_font = self._get_font(size=72, bold=True)
-            name_font = self._get_font(size=36, bold=True)
-
-            # Add semi-transparent dark gradient at bottom
+            # Create gradient overlay for text readability
             gradient = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
-            gradient_draw = ImageDraw.Draw(gradient)
-            for y in range(self.height // 2, self.height):
-                alpha = int(180 * (y - self.height // 2) / (self.height // 2))
-                gradient_draw.line(
-                    [(0, y), (self.width, y)],
-                    fill=(0, 0, 0, min(alpha, 180)),
-                )
+            g_draw = ImageDraw.Draw(gradient)
+            
+            # Subtle top gradient
+            for y in range(200):
+                alpha = int(120 * (1.0 - (y / 200.0)))
+                g_draw.line([(0, y), (self.width, y)], fill=(0, 0, 0, alpha))
+                
+            # Subtle bottom gradient
+            for y in range(self.height - 200, self.height):
+                alpha = int(120 * ((y - (self.height - 200)) / 200.0))
+                g_draw.line([(0, y), (self.width, y)], fill=(0, 0, 0, alpha))
+
+            # Composite the gradient box
             img = Image.alpha_composite(img.convert("RGBA"), gradient).convert("RGB")
             draw = ImageDraw.Draw(img)
 
-            # Draw title text (centered, near bottom)
-            title_upper = title_text.upper()[:30]
-            bbox = draw.textbbox((0, 0), title_upper, font=title_font)
+            # Load Arial bold or fallback
+            title_font = self._get_font(size=60, bold=True)
+            name_font = self._get_font(size=32, bold=True)
+
+            # 1. Draw Title Text (centered at top, 60pt bold, white, 4px black stroke, shadow)
+            title_str = text.strip().upper()
+            bbox = draw.textbbox((0, 0), title_str, font=title_font)
             text_w = bbox[2] - bbox[0]
-            text_x = (self.width - text_w) // 2
-            text_y = self.height - 160
+            text_h = bbox[3] - bbox[1]
+            title_x = (self.width - text_w) // 2
+            title_y = 60
 
-            # Text shadow
-            for offset in [(2, 2), (-2, -2), (2, -2), (-2, 2)]:
-                draw.text(
-                    (text_x + offset[0], text_y + offset[1]),
-                    title_upper,
-                    font=title_font,
-                    fill=(0, 0, 0),
-                )
-
-            # Main text (white with slight yellow tint)
+            # Draw shadow first
             draw.text(
-                (text_x, text_y),
-                title_upper,
+                (title_x + 3, title_y + 3),
+                title_str,
                 font=title_font,
-                fill=(255, 255, 240),
+                fill="black",
+                stroke_width=4,
+                stroke_fill="black"
+            )
+            # Draw main text
+            draw.text(
+                (title_x, title_y),
+                title_str,
+                font=title_font,
+                fill="white",
+                stroke_width=4,
+                stroke_fill="black"
             )
 
-            # Draw streamer name if provided
+            # 2. Draw Streamer Name (bottom-right, 32pt, white, 2px black stroke)
             if streamer_name:
-                name_text = f"@{streamer_name}"
-                bbox = draw.textbbox((0, 0), name_text, font=name_font)
-                name_w = bbox[2] - bbox[0]
-                name_x = (self.width - name_w) // 2
-                name_y = self.height - 80
+                name_str = f"@{streamer_name.strip()}"
+                n_bbox = draw.textbbox((0, 0), name_str, font=name_font)
+                n_w = n_bbox[2] - n_bbox[0]
+                n_h = n_bbox[3] - n_bbox[1]
+                name_x = self.width - n_w - 40
+                name_y = self.height - n_h - 40
 
-                draw.text(
-                    (name_x + 1, name_y + 1),
-                    name_text,
-                    font=name_font,
-                    fill=(0, 0, 0),
-                )
                 draw.text(
                     (name_x, name_y),
-                    name_text,
+                    name_str,
                     font=name_font,
-                    fill=(200, 200, 255),
+                    fill="white",
+                    stroke_width=2,
+                    stroke_fill="black"
                 )
 
-            # Save
-            img.save(str(output_path), "JPEG", quality=self.quality)
+            # 3. Enhance Image (+20% saturation, +15% contrast, +30% sharpness)
+            img = ImageEnhance.Color(img).enhance(1.2)
+            img = ImageEnhance.Contrast(img).enhance(1.15)
+            img = ImageEnhance.Sharpness(img).enhance(1.3)
+
+            # Save JPEG
+            img.save(output_path, "JPEG", quality=self.quality)
+            logger.info("🖼️ Thumbnail generated: %s", output_path.name)
             return output_path
 
         except Exception as e:
-            logger.error("PIL thumbnail composition failed: %s", e)
-            return self._compose_ffmpeg_fallback(
-                frame_path, output_path, title_text, streamer_name
-            )
-
-    def _compose_ffmpeg_fallback(
-        self,
-        frame_path: Path,
-        output_path: Path,
-        title_text: str,
-        streamer_name: str,
-    ) -> Optional[Path]:
-        """Fallback: use ffmpeg drawtext for thumbnail composition."""
-        title_clean = title_text.upper()[:30]
-        title_clean = title_clean.replace("'", "").replace(":", "")
-
-        filters = [
-            f"scale={self.width}:{self.height}:force_original_aspect_ratio=increase,"
-            f"crop={self.width}:{self.height}",
-            f"eq=contrast=1.15:saturation=1.1",
-            f"drawtext=text='{title_clean}':"
-            f"fontsize=72:fontcolor=white:"
-            f"borderw=4:bordercolor=black:"
-            f"x=(w-text_w)/2:y=h-160:"
-            f"shadowcolor=black@0.6:shadowx=3:shadowy=3",
-        ]
-
-        if streamer_name:
-            name_clean = f"@{streamer_name}"
-            filters.append(
-                f"drawtext=text='{name_clean}':"
-                f"fontsize=36:fontcolor=#C8C8FF:"
-                f"borderw=2:bordercolor=black:"
-                f"x=(w-text_w)/2:y=h-80"
-            )
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(frame_path),
-            "-vf", ",".join(filters),
-            "-q:v", "2",
-            str(output_path),
-        ]
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0 and output_path.exists():
-                return output_path
-            return None
-        except Exception:
+            logger.error("PIL composition or enhancement failed: %s", e)
             return None
 
-    @staticmethod
-    def _get_font(size: int = 48, bold: bool = False):
-        """Try to load a system font, fall back to PIL default."""
-        from PIL import ImageFont
-
-        # Try common font paths
-        font_names = [
-            "Impact",       # Best for thumbnails
-            "Arial Black",
-            "Helvetica Bold",
-            "DejaVuSans-Bold",
-            "Arial",
-        ] if bold else [
-            "Arial",
-            "Helvetica",
-            "DejaVuSans",
-        ]
-
+    def _get_font(self, size: int, bold: bool = False) -> ImageFont:
+        """Try loading Arial/Impact bold from system paths, fallback to default font."""
+        font_names = ["arialbd.ttf", "arial.ttf", "Arial-Bold", "Arial"] if bold else ["arial.ttf", "Arial"]
         for name in font_names:
             try:
                 return ImageFont.truetype(name, size)
-            except (OSError, IOError):
+            except OSError:
                 continue
 
-        # Try common system paths
+        # System paths for Windows
         import sys
-        font_paths = []
         if sys.platform == "win32":
-            font_paths = [
-                "C:/Windows/Fonts/impact.ttf",
-                "C:/Windows/Fonts/arialbd.ttf",
-                "C:/Windows/Fonts/arial.ttf",
-            ]
-        elif sys.platform == "darwin":
-            font_paths = [
-                "/System/Library/Fonts/Supplemental/Impact.ttf",
-                "/System/Library/Fonts/Helvetica.ttc",
-            ]
-        else:
-            font_paths = [
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            ]
+            paths = ["C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/arial.ttf"] if bold else ["C:/Windows/Fonts/arial.ttf"]
+            for path in paths:
+                try:
+                    return ImageFont.truetype(path, size)
+                except OSError:
+                    continue
 
-        for path in font_paths:
-            try:
-                return ImageFont.truetype(path, size)
-            except (OSError, IOError):
-                continue
-
-        # Final fallback
-        logger.debug("Using PIL default font (no system fonts found)")
         return ImageFont.load_default()
