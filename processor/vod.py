@@ -367,7 +367,7 @@ class VODProcessor:
                 conf_score = 0.3  # Neutral
 
             # Metric 3: Audio spikes in this window
-            window_spikes = [e for e in audio_spikes if start <= e.offset_seconds <= end]
+            window_spikes = [e for e in audio_spikes if start <= e.timestamp <= end]
             peak_audio_score = max((e.score for e in window_spikes), default=0.0)
 
             # Metric 4: Viral / Hype words bonus

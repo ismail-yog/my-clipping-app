@@ -1,98 +1,109 @@
 """
 StreamClipper — Sentiment Detector
-Transcribes audio with faster-whisper and classifies emotion
-using a HuggingFace DistilRoBERTa model.
+Transcribes audio with faster-whisper and detects emotional content using sentiment analysis.
 """
 
 import time
 import logging
+import threading
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 import config
 
-logger = logging.getLogger("streamclipper.sentiment")
+logger = logging.getLogger("streamclipper.detector.sentiment")
+
+# Map sentiment labels to emotions
+EMOTION_MAP = {
+    "joy": "joy",
+    "anger": "anger",
+    "surprise": "surprise",
+    "sadness": "sadness",
+    "fear": "fear",
+    "neutral": "neutral",
+    "love": "joy",
+    "disgust": "anger"
+}
 
 
 @dataclass
 class TranscriptWord:
     word: str
-    start: float
-    end: float
+    start: float  # seconds
+    end: float    # seconds
     probability: float
 
 
 @dataclass
 class TranscriptSegment:
-    text: str
     start: float
     end: float
-    words: list[TranscriptWord]
+    text: str
+    words: List[TranscriptWord]
 
 
 @dataclass
 class SentimentEvent:
     timestamp: float
-    offset_seconds: float
-    text: str
-    emotion: str
-    confidence: float
-    score: float
+    emotion: str  # "joy", "anger", "surprise", "sadness", "fear", "neutral"
+    confidence: float  # 0-1
+    text_snippet: str  # the words that triggered this
+
+    @property
+    def score(self) -> float:
+        """Compatibility property for scorer that queries event.score."""
+        return self.confidence
 
 
 class SentimentDetector:
-    """
-    Two-stage detector:
-    1. Transcribe audio with faster-whisper (word-level timestamps)
-    2. Classify transcript segments with HuggingFace emotion model
-    """
+    """Monitors streams and detects emotional cues from transcripts."""
 
     def __init__(self, thresholds: Optional[config.DetectionThresholds] = None):
         self.thresholds = thresholds or config.thresholds
         self._whisper_model = None
-        self._emotion_pipeline = None
-        self._events: list[SentimentEvent] = []
-        self._transcripts: list[TranscriptSegment] = []
+        self._sentiment_pipeline = None
+        self.recent_events: List[SentimentEvent] = []
+        self._lock = threading.Lock()
 
     def _load_whisper(self):
+        """Lazy load Whisper model to save memory and startup time."""
         if self._whisper_model is None:
             from faster_whisper import WhisperModel
-            logger.info("Loading Whisper model: %s", config.WHISPER_MODEL)
+            logger.info("Loading Whisper model: %s on device: %s (%s)...", 
+                        config.WHISPER_MODEL, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
             self._whisper_model = WhisperModel(
                 config.WHISPER_MODEL,
                 device=config.WHISPER_DEVICE,
-                compute_type=config.WHISPER_COMPUTE_TYPE,
+                compute_type=config.WHISPER_COMPUTE_TYPE
             )
-            logger.info("Whisper model loaded")
+            logger.info("Whisper model loaded successfully.")
         return self._whisper_model
 
-    def _load_emotion(self):
-        if self._emotion_pipeline is None:
+    def _load_sentiment_pipeline(self):
+        """Lazy load sentiment classifier model to save memory and startup time."""
+        if self._sentiment_pipeline is None:
             from transformers import pipeline
-            logger.info("Loading emotion classifier...")
-            self._emotion_pipeline = pipeline(
-                "text-classification",
+            logger.info("Loading sentiment-analysis pipeline (j-hartmann/emotion-english-distilroberta-base)...")
+            self._sentiment_pipeline = pipeline(
+                "sentiment-analysis",
                 model="j-hartmann/emotion-english-distilroberta-base",
-                top_k=None,
-                device=-1,  # CPU; change to 0 for GPU
+                device=-1  # Force CPU to match target speed constraints
             )
-            logger.info("Emotion classifier loaded")
-        return self._emotion_pipeline
+            logger.info("Sentiment pipeline loaded successfully.")
+        return self._sentiment_pipeline
 
-    def transcribe(self, audio_path: Path) -> list[TranscriptSegment]:
-        """Transcribe audio file and return segments with word timestamps."""
-        model = self._load_whisper()
+    def transcribe(self, audio_path: Path) -> List[TranscriptSegment]:
+        """Transcribe an audio file using faster-whisper with word-level timestamps."""
         try:
-            segments_iter, info = model.transcribe(
+            model = self._load_whisper()
+            segments_iter, _ = model.transcribe(
                 str(audio_path),
                 word_timestamps=True,
                 language="en",
-                vad_filter=True,
+                vad_filter=True
             )
-            logger.debug("Transcribing: %s (lang=%s, prob=%.2f)",
-                         audio_path, info.language, info.language_probability)
-
+            
             segments = []
             for seg in segments_iter:
                 words = []
@@ -102,97 +113,84 @@ class SentimentDetector:
                             word=w.word.strip(),
                             start=w.start,
                             end=w.end,
-                            probability=w.probability,
+                            probability=w.probability
                         )
                         for w in seg.words
                     ]
-
-                segments.append(TranscriptSegment(
-                    text=seg.text.strip(),
-                    start=seg.start,
-                    end=seg.end,
-                    words=words,
-                ))
-
-            self._transcripts.extend(segments)
-            logger.info("Transcribed %d segments from %s", len(segments), audio_path.name)
-            return segments
-
-        except Exception as e:
-            logger.error("Transcription failed: %s", e)
-            return []
-
-    def classify_emotions(
-        self,
-        segments: list[TranscriptSegment],
-        reference_time: Optional[float] = None,
-    ) -> list[SentimentEvent]:
-        """Classify emotion for each transcript segment."""
-        classifier = self._load_emotion()
-        ref_time = reference_time or time.time()
-        events = []
-
-        target_emotions = set(self.thresholds.sentiment_emotions)
-        min_conf = self.thresholds.sentiment_min_confidence
-
-        for seg in segments:
-            if not seg.text or len(seg.text) < 5:
-                continue
-
-            try:
-                results = classifier(seg.text[:512])
-                if not results or not results[0]:
-                    continue
-
-                # results[0] is a list of {label, score} sorted by score
-                top = results[0][0]
-                emotion = top["label"]
-                confidence = top["score"]
-
-                # Only flag emotions in our target list above threshold
-                if emotion in target_emotions and confidence >= min_conf:
-                    score = min(1.0, confidence / 0.9)
-                    event = SentimentEvent(
-                        timestamp=ref_time + seg.start,
-                        offset_seconds=seg.start,
-                        text=seg.text,
-                        emotion=emotion,
-                        confidence=confidence,
-                        score=score,
+                segments.append(
+                    TranscriptSegment(
+                        start=seg.start,
+                        end=seg.end,
+                        text=seg.text.strip(),
+                        words=words
                     )
-                    events.append(event)
-
-            except Exception as e:
-                logger.debug("Emotion classification error: %s", e)
-
-        self._events.extend(events)
-        logger.info("Sentiment: %d events from %d segments", len(events), len(segments))
-        return events
-
-    def predict(self, text: str) -> list[dict]:
-        """Predict emotion for a single block of text."""
-        classifier = self._load_emotion()
-        try:
-            return classifier(text[:512])
-        except Exception:
+                )
+            return segments
+        except Exception as e:
+            logger.error("Whisper transcription failed for %s: %s", audio_path.name, e, exc_info=True)
             return []
 
-    def analyze(self, audio_path: Path, reference_time: Optional[float] = None) -> list[SentimentEvent]:
-        """Full pipeline: transcribe then classify."""
+    def analyze(self, audio_path: Path, reference_time: float) -> List[SentimentEvent]:
+        """Transcribe audio and analyze emotions in the transcript segments."""
         segments = self.transcribe(audio_path)
         if not segments:
             return []
-        return self.classify_emotions(segments, reference_time)
 
-    @property
-    def recent_events(self) -> list[SentimentEvent]:
-        cutoff = time.time() - 300
-        return [e for e in self._events if e.timestamp >= cutoff]
+        pipeline_model = self._load_sentiment_pipeline()
+        events = []
+        target_emotions = set(self.thresholds.sentiment_emotions)
+        min_confidence = self.thresholds.sentiment_min_confidence
 
-    @property
-    def recent_transcripts(self) -> list[TranscriptSegment]:
-        return self._transcripts[-50:]
+        for seg in segments:
+            text = seg.text.strip()
+            if not text:
+                continue
+
+            try:
+                results = pipeline_model(text[:512])
+                if results:
+                    # Handle both nested list and list format
+                    top_pred = results[0][0] if isinstance(results[0], list) else results[0]
+                    raw_label = top_pred.get("label", "neutral")
+                    confidence = top_pred.get("score", 0.0)
+                else:
+                    raw_label = "neutral"
+                    confidence = 0.0
+            except Exception as e:
+                logger.error("Sentiment analysis failed for text snippet '%s': %s", text, e)
+                raw_label = "neutral"
+                confidence = 1.0
+
+            emotion = EMOTION_MAP.get(raw_label.lower(), "neutral")
+
+            if confidence >= min_confidence and emotion in target_emotions:
+                event = SentimentEvent(
+                    timestamp=reference_time + seg.start,
+                    emotion=emotion,
+                    confidence=confidence,
+                    text_snippet=text
+                )
+                events.append(event)
+
+        if events:
+            with self._lock:
+                self.recent_events.extend(events)
+                self._prune_old_events()
+
+        return events
+
+    def _prune_old_events(self):
+        """Remove SentimentEvent instances older than 60 seconds."""
+        cutoff = time.time() - 60.0
+        self.recent_events = [e for e in self.recent_events if e.timestamp >= cutoff]
+
+    def get_recent_events(self, last_n_seconds: float = 30.0) -> List[SentimentEvent]:
+        """Fetch filtered sentiment events within the specified time window."""
+        with self._lock:
+            cutoff = time.time() - last_n_seconds
+            return [e for e in self.recent_events if e.timestamp >= cutoff]
 
     def clear_events(self):
-        self._events.clear()
-        self._transcripts.clear()
+        """Reset the cached events cache."""
+        with self._lock:
+            self.recent_events.clear()

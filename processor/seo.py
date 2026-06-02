@@ -1,245 +1,173 @@
 """
 StreamClipper — SEO Generator
-Uses Ollama (local LLM) to generate optimized titles, descriptions,
-tags, hook text, and thumbnail prompts for YouTube Shorts.
-Zero API cost — fully local.
-Falls back to templates when Ollama is unavailable.
+Generates YouTube Shorts metadata (titles, descriptions, tags, hooks, thumbnail text)
+using a local Ollama instance or static templates as fallback.
 """
 
 import json
 import logging
-import random
 from typing import Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import requests
 
 import config
 
-logger = logging.getLogger("streamclipper.seo")
+logger = logging.getLogger("streamclipper.processor.seo")
 
 
 @dataclass
 class SEOMetadata:
+    """SEO and thumbnail overlay metadata for a video clip."""
     title: str
     description: str
     tags: list[str]
-    hook_text: str  # Bold overlay text for first 3 seconds
-    thumbnail_prompt: str  # Text to overlay on thumbnail
+    hook_text: str  # 3-second opening text overlay
+    thumbnail_prompt: str  # Text overlay for thumbnail
     generated_by: str  # "ollama" or "template"
 
 
 class SEOGenerator:
-    """
-    Generates optimized YouTube Shorts metadata using a local LLM via Ollama.
-    Falls back to template-based generation if Ollama is unavailable.
-
-    Zero cost — no API keys, no subscriptions.
-    """
+    """Generates viral, search-optimized video metadata."""
 
     def __init__(self):
-        self._ollama_available: Optional[bool] = None
+        self.ollama_host = getattr(config, "OLLAMA_HOST", "http://localhost:11434")
+        self.model = getattr(config, "OLLAMA_MODEL", "llama3")
+        self.fallback_model = getattr(config, "OLLAMA_FALLBACK_MODEL", "mistral")
 
-    def _check_ollama(self) -> bool:
-        """Check if Ollama is running and the model is available."""
-        if self._ollama_available is not None:
-            return self._ollama_available
+    def generate(self, transcript: str, streamer_name: str, emotion: str, platform: str) -> SEOMetadata:
+        """Generate metadata using primary Ollama model, fallback model, or templates."""
+        prompt = self._build_prompt(transcript, streamer_name, emotion, platform)
 
+        # 1. Try primary Ollama model
         try:
-            resp = requests.get(
-                f"{config.OLLAMA_HOST}/api/tags",
-                timeout=3,
-            )
+            logger.info("Requesting SEO metadata from primary model: %s", self.model)
+            response = self._call_ollama(prompt, self.model)
+            if response:
+                meta = self._parse_response(response)
+                if meta:
+                    return meta
+        except Exception as e:
+            logger.warning("Primary Ollama model (%s) failed: %s", self.model, e)
+
+        # 2. Try fallback Ollama model
+        try:
+            logger.info("Requesting SEO metadata from fallback model: %s", self.fallback_model)
+            response = self._call_ollama(prompt, self.fallback_model)
+            if response:
+                meta = self._parse_response(response)
+                if meta:
+                    return meta
+        except Exception as e:
+            logger.warning("Fallback Ollama model (%s) failed: %s", self.fallback_model, e)
+
+        # 3. Fallback to static template-based generation
+        logger.info("Ollama unavailable or failed — falling back to template-based SEO")
+        return self._template_generate(transcript, streamer_name, emotion)
+
+    def _call_ollama(self, prompt: str, model: str) -> Optional[str]:
+        """Execute HTTP POST call to the local Ollama api/generate endpoint."""
+        url = f"{self.ollama_host}/api/generate"
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
             if resp.status_code == 200:
-                models = [m["name"] for m in resp.json().get("models", [])]
-                # Check for primary or fallback model
-                primary = config.OLLAMA_MODEL.split(":")[0]
-                if any(primary in m for m in models):
-                    self._ollama_available = True
-                    logger.info("Ollama connected — model '%s' available", config.OLLAMA_MODEL)
-                    return True
-                # Check fallback
-                fallback = config.OLLAMA_FALLBACK_MODEL.split(":")[0]
-                if any(fallback in m for m in models):
-                    logger.info(
-                        "Primary model '%s' not found, using fallback '%s'",
-                        config.OLLAMA_MODEL, config.OLLAMA_FALLBACK_MODEL,
-                    )
-                    config.OLLAMA_MODEL = config.OLLAMA_FALLBACK_MODEL
-                    self._ollama_available = True
-                    return True
+                return resp.json().get("response")
+        except Exception as e:
+            logger.debug("Ollama request failed for model %s: %s", model, e)
+        return None
 
-                logger.warning(
-                    "Ollama running but models not found. Available: %s",
-                    ", ".join(models) if models else "(none)",
-                )
-                self._ollama_available = False
-                return False
+    def _build_prompt(self, transcript: str, streamer_name: str, emotion: str, platform: str) -> str:
+        """Engineer viral prompt requesting JSON schema matching SEOMetadata."""
+        return f"""You are a YouTube Shorts and TikTok viral marketing expert. 
+Generate metadata for a highlight clip using these details:
+- Streamer Name: {streamer_name}
+- Stream Platform: {platform}
+- Dominant Emotion: {emotion or 'exciting'}
+- Transcript: "{transcript[:500]}"
 
-            self._ollama_available = False
-            return False
+You must generate optimized metadata using viral clickbait formulas, such as:
+1. "INSANE {{action}} by {streamer_name}!"
+2. "{streamer_name} just {{action}} and chat went WILD"
+3. "This is the funniest moment EVER"
 
-        except requests.RequestException:
-            logger.warning("Ollama not reachable at %s — using templates", config.OLLAMA_HOST)
-            self._ollama_available = False
-            return False
+Your output MUST be a single raw JSON object matching the schema below. Do not include markdown blocks (like ```json), introduction, or commentary.
 
-    def generate(
-        self,
-        transcript: str,
-        streamer_name: str,
-        emotion: str = "",
-        platform: str = "kick",
-    ) -> SEOMetadata:
-        """Generate SEO metadata. Ollama → template fallback."""
-        if self._check_ollama():
-            try:
-                return self._generate_with_ollama(
-                    transcript, streamer_name, emotion, platform
-                )
-            except Exception as e:
-                logger.warning("Ollama SEO failed, using template: %s", e)
-                # Reset availability so we retry next time
-                self._ollama_available = None
-
-        return self._generate_template(streamer_name, emotion, platform)
-
-    def _generate_with_ollama(
-        self,
-        transcript: str,
-        streamer_name: str,
-        emotion: str,
-        platform: str,
-    ) -> SEOMetadata:
-        """Generate SEO using local Ollama LLM."""
-        prompt = f"""You are a YouTube Shorts SEO expert. Generate viral metadata for a highlight clip.
-
-Streamer: {streamer_name}
-Platform: {platform}
-Dominant emotion: {emotion or 'exciting'}
-Transcript excerpt: {transcript[:500]}
-
-Return ONLY this JSON (no markdown, no explanation):
+JSON Output Schema:
 {{
-  "title": "catchy title under 100 chars with emojis, optimized for YouTube search",
-  "description": "2-3 sentence description with 5 hashtags at the end",
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8"],
-  "hook_text": "3-5 word bold hook for first 3 seconds overlay (e.g. 'HE ACTUALLY DID IT')",
-  "thumbnail_prompt": "short punchy text for thumbnail overlay (e.g. 'INSANE PLAY')"
+  "title": "A clickbait title under 80 characters (with 1-2 emojis, e.g., 'INSANE clutch by {streamer_name}! 😱')",
+  "description": "A 2-sentence description containing the streamer name, summary of what happened, and 5 viral hashtags.",
+  "tags": ["array", "of", "5-8", "short", "lowercase", "keywords", "including", "streamer", "name"],
+  "hook_text": "Irresistible 3-second opening text overlay (under 30 characters, e.g. 'HE DID WHAT?!')",
+  "thumbnail_prompt": "Punchy 1-2 word text overlay for the thumbnail (e.g. 'UNBELIEVABLE')"
 }}
 
-Rules:
-- Title MUST be under 100 characters, attention-grabbing, include 1-2 emojis
-- Hook text is a BOLD overlay burned into the first 3 seconds — make it irresistible
-- Tags should include streamer name, platform, and content-relevant terms
-- Optimize everything for YouTube Shorts discovery and CTR
-- Description must end with 5 relevant hashtags"""
+Constraints:
+- title length <= 80 characters
+- hook_text length <= 30 characters
+- tags list size must be between 5 and 8 elements
+"""
 
-        resp = requests.post(
-            f"{config.OLLAMA_HOST}/api/generate",
-            json={
-                "model": config.OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.7,
-                    "num_predict": 500,
-                },
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
+    def _parse_response(self, response: str) -> Optional[SEOMetadata]:
+        """Robustly parse JSON object from LLM generation response string."""
+        try:
+            cleaned = response.strip()
+            
+            # Remove potential markdown block wraps
+            if "```" in cleaned:
+                blocks = cleaned.split("```")
+                for block in blocks:
+                    block_clean = block.strip()
+                    if block_clean.startswith("json"):
+                        block_clean = block_clean[4:].strip()
+                    if block_clean.startswith("{") and block_clean.endswith("}"):
+                        cleaned = block_clean
+                        break
+            
+            # Find boundaries of the JSON object
+            start = cleaned.find("{")
+            end = cleaned.rfind("}") + 1
+            if start >= 0 and end > start:
+                json_str = cleaned[start:end]
+                data = json.loads(json_str)
+                
+                # Apply length constraints safely
+                title = data.get("title", "")[:80]
+                description = data.get("description", "")
+                tags = [str(t).lower() for t in data.get("tags", [])][:8]
+                hook_text = data.get("hook_text", "")[:30]
+                thumbnail_prompt = data.get("thumbnail_prompt", "")[:30]
+                
+                return SEOMetadata(
+                    title=title,
+                    description=description,
+                    tags=tags,
+                    hook_text=hook_text,
+                    thumbnail_prompt=thumbnail_prompt,
+                    generated_by="ollama"
+                )
+        except Exception as e:
+            logger.error("Failed to parse JSON response from Ollama: %s", e)
+        return None
 
-        response_text = resp.json().get("response", "").strip()
-
-        # Parse JSON — handle potential markdown wrapping
-        if "```" in response_text:
-            response_text = response_text.split("```")[1]
-            if response_text.startswith("json"):
-                response_text = response_text[4:]
-            response_text = response_text.strip()
-
-        # Find JSON object boundaries
-        start = response_text.find("{")
-        end = response_text.rfind("}") + 1
-        if start >= 0 and end > start:
-            response_text = response_text[start:end]
-
-        data = json.loads(response_text)
-
-        return SEOMetadata(
-            title=data.get("title", f"{streamer_name} highlight")[:100],
-            description=data.get("description", ""),
-            tags=data.get("tags", [])[:15],
-            hook_text=data.get("hook_text", "MUST WATCH")[:50],
-            thumbnail_prompt=data.get("thumbnail_prompt", "INSANE")[:30],
-            generated_by="ollama",
-        )
-
-    def _generate_template(
-        self,
-        streamer_name: str,
-        emotion: str,
-        platform: str,
-    ) -> SEOMetadata:
-        """Fallback: generate SEO using templates when Ollama is unavailable."""
-        emotion_map = {
-            "joy": {
-                "titles": ["😂 FUNNIEST moment", "💀 I CAN'T BREATHE", "😭 THIS IS TOO FUNNY"],
-                "hooks": ["YOU WON'T BELIEVE THIS", "I'M DYING 💀", "WAIT FOR IT"],
-                "thumbs": ["HILARIOUS", "LMAOOO", "SO FUNNY"],
-            },
-            "anger": {
-                "titles": ["😡 RAGE MOMENT", "🤬 LOST IT COMPLETELY", "💢 THE RAGE IS REAL"],
-                "hooks": ["HE SNAPPED", "FULL RAGE MODE", "LOST IT"],
-                "thumbs": ["RAGE QUIT", "SO MAD", "TILTED"],
-            },
-            "surprise": {
-                "titles": ["😱 NO WAY THIS HAPPENED", "🤯 ABSOLUTELY INSANE", "😲 DID THAT JUST HAPPEN"],
-                "hooks": ["WAIT WHAT?!", "NO WAY", "IMPOSSIBLE"],
-                "thumbs": ["INSANE", "NO WAY", "CRAZY"],
-            },
-            "fear": {
-                "titles": ["😨 TERRIFYING MOMENT", "💀 SCARIEST CLIP EVER", "😰 SO SCARY"],
-                "hooks": ["DON'T LOOK AWAY", "SCARY AF", "TERRIFYING"],
-                "thumbs": ["SCARY", "HORROR", "TERRIFYING"],
-            },
-        }
-
-        emo = emotion_map.get(emotion, {
-            "titles": ["🔥 MUST WATCH MOMENT", "💯 BEST CLIP TODAY", "⚡ INSANE HIGHLIGHT"],
-            "hooks": ["WATCH THIS", "INSANE PLAY", "MUST SEE"],
-            "thumbs": ["EPIC", "INSANE", "VIRAL"],
-        })
-
-        title = f"{random.choice(emo['titles'])} from {streamer_name}! #shorts"
-        hook = random.choice(emo["hooks"])
-        thumb = random.choice(emo["thumbs"])
-
-        description = (
-            f"Insane highlight from {streamer_name}'s {platform} stream! "
-            f"Watch this {emotion or 'epic'} moment that had chat going crazy. "
-            f"#shorts #{streamer_name.lower()} #{platform} #gaming #highlights"
-        )
-
-        tags = [
-            streamer_name.lower(),
-            platform,
-            "shorts",
-            "highlights",
-            "clips",
-            "gaming",
-            "viral",
-            "best moments",
-            f"{streamer_name} clips",
-            f"{platform} clips",
-        ]
+    def _template_generate(self, transcript: str, streamer_name: str, emotion: str) -> SEOMetadata:
+        """Static template generator used as fallback if Ollama model calls fail."""
+        emo_str = emotion or "epic"
+        title = f"{emo_str.upper()} moment from {streamer_name}!"
+        description = transcript[:200] + "..." if transcript else f"Epic highlight moment featuring {streamer_name}!"
+        tags = [streamer_name.lower(), "twitch", "funny", "viral", "clip", emo_str.lower(), "highlights", "gaming"]
+        hook_text = "WATCH THIS 👀"
+        thumbnail_prompt = f"{streamer_name} REACTS"
 
         return SEOMetadata(
-            title=title[:100],
+            title=title[:80],
             description=description,
             tags=tags,
-            hook_text=hook,
-            thumbnail_prompt=thumb,
-            generated_by="template",
+            hook_text=hook_text[:30],
+            thumbnail_prompt=thumbnail_prompt[:30],
+            generated_by="template"
         )
