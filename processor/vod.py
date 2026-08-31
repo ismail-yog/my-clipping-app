@@ -463,11 +463,17 @@ class VODProcessor:
 
         timestamp = int(time.time())
         output_path = config.RAW_DIR / f"vod_{timestamp}.mp4"
+        res = config.vod_settings.download_resolution
         cmd = [
             "yt-dlp",
-            "--merge-output-format", "mp4",
+            "--newline",
+            "--no-colors",
+            "--no-playlist",
             "--no-check-certificate",
-            "-f", f"bestvideo[height<={config.vod_settings.download_resolution}]+bestaudio/best[height<={config.vod_settings.download_resolution}]/best",
+            "--extractor-args", "youtube:player_client=android,web",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "--merge-output-format", "mp4",
+            "-f", f"bestvideo[height<={res}]+bestaudio/best[height<={res}]/best",
             "-o", str(output_path),
             url
         ]
