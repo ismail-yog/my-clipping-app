@@ -11,7 +11,7 @@ from processor.audio_engine import AudioEngine
 
 def test_ffmpeg():
     print("=========================================")
-    print("🔬 Debugging FFmpeg Render Command")
+    print("Debugging FFmpeg Render Command")
     print("=========================================")
     
     # Locate active temp directory

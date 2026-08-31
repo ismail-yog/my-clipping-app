@@ -226,15 +226,15 @@ class VODProcessor:
                 return True
         return False
 
-    def run_subprocess(self, cmd: list[str], timeout: Optional[int] = None, capture_output: bool = True, text: bool = True) -> subprocess.CompletedProcess:
-        """Run subprocess supporting cancellation."""
+    def run_subprocess(self, cmd: list[str], timeout: Optional[int] = None, capture_output: bool = True, text: bool = True, line_callback = None) -> subprocess.CompletedProcess:
+        """Run subprocess supporting cancellation and real-time line parsing."""
         if self.cancelled:
             raise RuntimeError("Job cancelled")
 
         kwargs = {}
         if capture_output:
             kwargs["stdout"] = subprocess.PIPE
-            kwargs["stderr"] = subprocess.PIPE
+            kwargs["stderr"] = subprocess.STDOUT if line_callback else subprocess.PIPE
         if text:
             kwargs["text"] = True
 
@@ -244,8 +244,25 @@ class VODProcessor:
             proc = subprocess.Popen(cmd, **kwargs)
             self.active_processes.add(proc)
 
+        stdout_lines = []
+        stderr_lines = []
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
+            if line_callback and proc.stdout:
+                for line in proc.stdout:
+                    if self.cancelled:
+                        proc.kill()
+                        raise RuntimeError("Job cancelled")
+                    stdout_lines.append(line)
+                    try:
+                        line_callback(line.strip())
+                    except Exception:
+                        pass
+                proc.wait(timeout=timeout)
+                stdout = "".join(stdout_lines)
+                stderr = ""
+            else:
+                stdout, stderr = proc.communicate(timeout=timeout)
+
             ret = proc.returncode
             if self.cancelled:
                 raise RuntimeError("Job cancelled")
@@ -300,7 +317,7 @@ class VODProcessor:
         try:
             # ── 1. DOWNLOAD (Optimized resolution) ──────────────────────────────
             progress(5, f"Downloading video ({config.vod_settings.download_resolution}p)...")
-            video_path = self._download_vod(url)
+            video_path = self._download_vod(url, progress_callback=progress)
             if not video_path:
                 logger.error("VOD download failed for URL: %s", url)
                 progress(0, "Download failed")
@@ -311,7 +328,7 @@ class VODProcessor:
 
             # ── 2. TRANSCRIBE (extract audio & run Whisper) ─────────────────────
             progress(25, "Extracting audio and transcribing VOD...")
-            self._current_segments = self._transcribe_vod(video_path)
+            self._current_segments = self._transcribe_vod(video_path, progress_callback=progress)
             if not self._current_segments:
                 logger.warning("No transcript segments generated, using fallback segments")
                 self._current_segments = self._create_fallback_segments(duration)
@@ -435,33 +452,54 @@ class VODProcessor:
                 # Keep progress for 30s so UI can read it, then remove
                 threading.Timer(30, lambda: VOD_PROGRESS.pop(job_id, None)).start()
 
-    def _download_vod(self, url: str) -> Optional[Path]:
-        """Download VOD with yt-dlp."""
+    def _download_vod(self, url: str, progress_callback = None) -> Optional[Path]:
+        """Download VOD with yt-dlp, streaming output for live progress."""
+        import re
         # For testing compatibility: if test_vod.py copied the file to temp/vod_testvod/video.mp4, use that directly
         test_path = config.TEMP_MEDIA_DIR / f"vod_{self._current_vid}" / "video.mp4"
         if test_path.exists():
             logger.info("Found pre-existing mock VOD video at %s", test_path)
             return test_path
 
-        output_path = config.RAW_DIR / f"vod_{int(time.time())}.mp4"
+        timestamp = int(time.time())
+        output_path = config.RAW_DIR / f"vod_{timestamp}.mp4"
         cmd = [
             "yt-dlp",
-            "-f", f"best[height<={config.vod_settings.download_resolution}]",
+            "--merge-output-format", "mp4",
+            "--no-check-certificate",
+            "-f", f"bestvideo[height<={config.vod_settings.download_resolution}]+bestaudio/best[height<={config.vod_settings.download_resolution}]/best",
             "-o", str(output_path),
             url
         ]
+
+        def parse_line(line: str):
+            match = re.search(r"\[download\]\s+(\d+\.\d+)%", line)
+            if match and progress_callback:
+                dl_pct = float(match.group(1))
+                mapped = 5 + int((dl_pct / 100.0) * 20.0)
+                progress_callback(mapped, f"Downloading VOD ({dl_pct:.1f}%)...")
+
         try:
             logger.info("Running yt-dlp download: %s", " ".join(cmd))
-            r = self.run_subprocess(cmd, timeout=300)
-            if r.returncode == 0 and output_path.exists():
+            r = self.run_subprocess(cmd, timeout=600, line_callback=parse_line)
+            if output_path.exists():
                 return output_path
-            logger.error("yt-dlp failed with return code %d", r.returncode)
+                
+            # Fallback file lookup if yt-dlp output extension differed
+            pattern = f"vod_{timestamp}*"
+            matches = list(config.RAW_DIR.glob(pattern))
+            if matches and matches[0].exists():
+                logger.info("Found downloaded video via match: %s", matches[0])
+                return matches[0]
+
+            if r.returncode != 0:
+                logger.error("yt-dlp failed with return code %d: %s", r.returncode, r.stderr[:200] if hasattr(r, 'stderr') else "")
             return None
         except Exception as e:
             logger.error("yt-dlp download crashed: %s", e)
             return None
 
-    def _transcribe_vod(self, video_path: Path) -> list[TranscriptSegment]:
+    def _transcribe_vod(self, video_path: Path, progress_callback = None) -> list[TranscriptSegment]:
         """Extract audio first, then transcribe entire video with Whisper (word_timestamps=True)."""
         temp_dir = video_path.parent
         audio_path = temp_dir / f"audio_{int(time.time())}.wav"
@@ -496,6 +534,7 @@ class VODProcessor:
                 condition_on_previous_text=True,
             )
 
+            total_duration = info.duration if hasattr(info, "duration") and info.duration else 1.0
             result = []
             for seg in segs:
                 if self.cancelled:
@@ -511,6 +550,11 @@ class VODProcessor:
                     text=seg.text.strip(),
                     words=words,
                 ))
+                if progress_callback and total_duration > 0:
+                    whisper_pct = min(1.0, seg.end / total_duration)
+                    mapped = 25 + int(whisper_pct * 30.0)
+                    progress_callback(mapped, f"Transcribing audio ({int(whisper_pct * 100)}%)...")
+
             logger.info("VOD transcription complete. Found %d segments.", len(result))
             return result
         except Exception as e:
@@ -528,6 +572,7 @@ class VODProcessor:
                     beam_size=1,
                     temperature=0.0,
                 )
+                total_duration = info.duration if hasattr(info, "duration") and info.duration else 1.0
                 result = []
                 for seg in segs:
                     words = []
@@ -540,6 +585,11 @@ class VODProcessor:
                         text=seg.text.strip(),
                         words=words,
                     ))
+                    if progress_callback and total_duration > 0:
+                        whisper_pct = min(1.0, seg.end / total_duration)
+                        mapped = 25 + int(whisper_pct * 30.0)
+                        progress_callback(mapped, f"Transcribing audio ({int(whisper_pct * 100)}%)...")
+
                 logger.info("Fallback VOD transcription complete. Found %d segments.", len(result))
                 return result
             except Exception as ex:

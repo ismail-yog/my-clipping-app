@@ -26,6 +26,10 @@ from processor.hook import HookOverlayRenderer
 from processor.thumbnail import ThumbnailGenerator
 from uploader.youtube import YouTubeUploader
 
+# Dream Team integration
+from dream_team import config as dt_config
+from dream_team.director import Director
+
 logger = logging.getLogger("streamclipper.pipeline")
 
 
@@ -35,11 +39,13 @@ class StreamPipeline:
     Capture → Detect → Score → Clip → SEO → Hook → Thumbnail → Queue → Upload
     """
 
-    def __init__(self, status: StreamStatus, db: Database, task_queue: TaskQueue):
+    def __init__(self, status: StreamStatus, db: Database, task_queue: TaskQueue,
+                 director: Optional[Director] = None):
         self.status = status
         self.streamer = status.streamer
         self.db = db
         self.task_queue = task_queue
+        self.director = director  # Dream Team Director
 
         # Components
         self.capture = StreamCapture(self.streamer)
@@ -285,6 +291,63 @@ class StreamPipeline:
                 seo_meta.generated_by, seo_meta.title, seo_meta.hook_text,
             )
 
+            # ── Dream Team Enhancement ───────────────────────────────
+            # Run the clip through all Dream Team agents for AI-powered
+            # viral scoring, SEO refinement, moderation, and visuals.
+            if self.director and self.director.is_ready:
+                try:
+                    dt_clip_data = {
+                        "clip_id": clip_meta.clip_id,
+                        "clip_path": str(clip_meta.clip_path),
+                        "transcript": clip_meta.transcript,
+                        "emotion": emotion,
+                        "streamer_name": self.streamer.name,
+                        "chat_intensity": getattr(moment, "chat_score", 0.0),
+                        "title": seo_meta.title,
+                        "description": seo_meta.description,
+                        "tags": seo_meta.tags,
+                    }
+                    dt_result = self.director.process_clip(dt_clip_data)
+
+                    # Apply enhanced SEO if available
+                    if dt_result.get("seo_enhanced"):
+                        seo_meta.title = dt_result.get("title", seo_meta.title)
+                        seo_meta.description = dt_result.get("description", seo_meta.description)
+                        seo_meta.tags = dt_result.get("tags", seo_meta.tags)
+                        # Update DB with enhanced SEO
+                        self.db.update_clip_seo(
+                            clip_id=clip_meta.clip_id,
+                            title=seo_meta.title,
+                            description=seo_meta.description,
+                            tags=seo_meta.tags,
+                            hook_text=dt_result.get("hook_text", seo_meta.hook_text),
+                            seo_method=f"{seo_meta.generated_by}+dreamteam",
+                        )
+
+                    # Check moderation result — override auto_approve if rejected
+                    mod_action = dt_result.get("moderation_action", "approve")
+                    if mod_action == "reject":
+                        auto_approve = False
+                        logger.warning(
+                            "🛡️ Sentinel REJECTED clip %s — flagged for review",
+                            clip_meta.clip_id,
+                        )
+                    elif mod_action == "flag":
+                        auto_approve = False
+                        logger.info(
+                            "🛡️ Sentinel FLAGGED clip %s — needs manual review",
+                            clip_meta.clip_id,
+                        )
+
+                    logger.info(
+                        "🤖 Dream Team processed clip %s — viral=%.2f, mod=%s",
+                        clip_meta.clip_id,
+                        dt_result.get("viral_score", 0.0),
+                        mod_action,
+                    )
+                except Exception as dt_exc:
+                    logger.warning("Dream Team processing failed (non-fatal): %s", dt_exc)
+
             # Apply hook, watermark, and outro overlay
             clip_path = Path(clip_meta.clip_path)
             hook_result = self.hook_renderer.apply(
@@ -351,6 +414,21 @@ class PipelineManager:
         self._lock = threading.Lock()
         self.is_active = False
 
+        # Dream Team — AI agent orchestrator
+        self._director: Optional[Director] = None
+        if dt_config.DREAM_TEAM_ENABLED:
+            try:
+                self._director = Director()
+                self._director.initialise()
+                logger.info(
+                    "🤖 Dream Team active — %d agents: %s",
+                    len(self._director.active_agents),
+                    self._director.active_agents,
+                )
+            except Exception as exc:
+                logger.warning("Dream Team failed to initialise (non-fatal): %s", exc)
+                self._director = None
+
         # Register queue handlers
         self._uploader = YouTubeUploader()
         self.task_queue.register("upload", self._handle_upload_job)
@@ -388,17 +466,9 @@ class PipelineManager:
         # Check daily quota
         uploads_today = self.db.count_uploads_today()
         if uploads_today >= config.UPLOAD_MAX_PER_DAY:
-            # Reschedule for later
-            self.task_queue.submit(
-                job_type="upload",
-                clip_id=clip_id,
-                payload=payload,
-                priority=5,
-                delay_seconds=3600,  # Try again in 1 hour
-            )
             return JobResult(
                 success=False,
-                error=f"Daily quota reached ({uploads_today}/{config.UPLOAD_MAX_PER_DAY}), rescheduled",
+                error=f"Daily upload quota reached ({uploads_today}/{config.UPLOAD_MAX_PER_DAY})",
             )
 
         # Update clip status
@@ -465,6 +535,10 @@ class PipelineManager:
                 pipeline.stop()
             self._pipelines.clear()
 
+        # Shutdown Dream Team
+        if self._director:
+            self._director.shutdown()
+
         self.is_active = False
         logger.info("Pipeline manager stopped")
 
@@ -477,7 +551,9 @@ class PipelineManager:
                 logger.warning("Pipeline already running for %s", key)
                 return
 
-            pipeline = StreamPipeline(status, self.db, self.task_queue)
+            pipeline = StreamPipeline(
+                status, self.db, self.task_queue, director=self._director
+            )
             self._pipelines[key] = pipeline
             pipeline.start()
 

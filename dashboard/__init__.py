@@ -1,1 +1,0 @@
-"""StreamClipper — Dashboard package."""

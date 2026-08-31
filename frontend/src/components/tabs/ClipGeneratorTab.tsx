@@ -36,20 +36,23 @@ export default function ClipGeneratorTab() {
   // Poll job progress
   useEffect(() => {
     if (!job || job.progress >= 100) return;
-    pollRef.current = setInterval(async () => {
+
+    const check = async () => {
       try {
         const d: any = await getVODJobProgress(job.jobId);
-        setJob(prev => prev ? { ...prev, progress: d.progress, status: d.status } : null);
-        
+        setJob(prev => prev ? { ...prev, progress: d.progress ?? prev.progress, status: d.status ?? prev.status } : null);
         loadGeneratedClips();
 
         if (d.progress >= 100 || d.status === "completed") {
-          clearInterval(pollRef.current!);
+          if (pollRef.current) clearInterval(pollRef.current);
         }
       } catch { /* ignore poll errors */ }
-    }, 2000);
+    };
+
+    check();
+    pollRef.current = setInterval(check, 2000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [job?.jobId]);
+  }, [job?.jobId, job?.progress]);
 
   const loadGeneratedClips = async () => {
     try {
@@ -199,21 +202,29 @@ export default function ClipGeneratorTab() {
         </form>
       </div>
 
-      {/* Progress bar */}
-      {job && job.progress < 100 && (
-        <div className="card" style={{ padding: "28px", marginBottom: "32px", border: "1px solid #ddd6fe", background: "#f5f3ff" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+      {/* Step-by-Step Progress Tracker */}
+      {job && (
+        <div className="card" style={{ padding: "32px", marginBottom: "32px", border: "1px solid #c4b5fd", background: "linear-gradient(135deg, #faf5ff, #f3e8ff)", borderRadius: "20px", boxShadow: "0 10px 30px rgba(109,74,255,0.08)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
             <div>
-              <p style={{ fontSize: "14px", fontWeight: 800, color: "#4c1d95" }}>Current Task</p>
-              <p style={{ fontSize: "12px", color: "#7c3aed", fontWeight: 700, marginTop: "4px" }}>{job.status}</p>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span className="live-dot" />
+                <h3 style={{ fontSize: "16px", fontWeight: 900, color: "#3b0764", margin: 0 }}>
+                  {job.progress >= 100 ? "Processing Complete!" : "Pipeline Execution Active"}
+                </h3>
+              </div>
+              <p style={{ fontSize: "13px", color: "#6b21a8", fontWeight: 600, marginTop: "4px" }}>
+                {job.status || "Executing automated clipping steps..."}
+              </p>
             </div>
+
             <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-              {job.status !== "Cancelled" && job.status !== "failed" && (
+              {job.progress < 100 && job.status !== "Cancelled" && (
                 <button
                   onClick={async () => {
                     if (confirm("Are you sure you want to cancel this processing job?")) {
                       try {
-                        await cancelVODJob(job.jobId);
+                        if (job.jobId && job.jobId !== "submitting") await cancelVODJob(job.jobId);
                         setJob(prev => prev ? { ...prev, status: "Cancelled", progress: 0 } : null);
                       } catch (e: any) {
                         alert(`Failed to cancel: ${e.message}`);
@@ -221,31 +232,55 @@ export default function ClipGeneratorTab() {
                     }
                   }}
                   style={{
-                    background: "#fee2e2",
-                    color: "#ef4444",
-                    border: "none",
-                    borderRadius: "6px",
-                    padding: "6px 14px",
-                    fontSize: "12px",
-                    fontWeight: 800,
-                    cursor: "pointer",
-                    transition: "all 0.2s"
-                  }}
-                  onMouseOver={(e) => {
-                    e.currentTarget.style.background = "#fecaca";
-                  }}
-                  onMouseOut={(e) => {
-                    e.currentTarget.style.background = "#fee2e2";
+                    background: "#fee2e2", color: "#b91c1c", border: "none",
+                    borderRadius: "8px", padding: "8px 16px", fontSize: "12px",
+                    fontWeight: 800, cursor: "pointer", transition: "all 0.2s"
                   }}
                 >
                   Cancel Task
                 </button>
               )}
-              <span style={{ fontSize: "24px", fontWeight: 900, color: "#6d4aff" }}>{job.progress}%</span>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: "28px", fontWeight: 900, color: "#6d4aff" }}>{job.progress}%</span>
+              </div>
             </div>
           </div>
-          <div className="progress-track" style={{ background: "#ddd6fe", height: "12px" }}>
-            <div className="progress-fill" style={{ width: `${job.progress}%` }} />
+
+          {/* Progress Bar Track */}
+          <div className="progress-track" style={{ background: "#e9d5ff", height: "14px", borderRadius: "100px", overflow: "hidden", marginBottom: "24px" }}>
+            <div className="progress-fill" style={{ width: `${job.progress}%`, background: "linear-gradient(90deg, #8b5cf6, #6d4aff, #a855f7)", transition: "width 0.4s ease-out" }} />
+          </div>
+
+          {/* Step Pipeline Breakdown */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px" }}>
+            {[
+              { step: 1, name: "1. VOD Download", min: 0, max: 25 },
+              { step: 2, name: "2. Whisper Audio", min: 25, max: 55 },
+              { step: 3, name: "3. Viral Scoring", min: 55, max: 65 },
+              { step: 4, name: "4. Clip Rendering", min: 65, max: 90 },
+              { step: 5, name: "5. SEO & Thumbnails", min: 90, max: 100 },
+            ].map(s => {
+              const isDone = job.progress >= s.max;
+              const isActive = job.progress >= s.min && job.progress < s.max;
+              return (
+                <div key={s.step} style={{
+                  padding: "12px 14px", borderRadius: "12px",
+                  background: isDone ? "#dcfce7" : isActive ? "#ffffff" : "#f3e8ff",
+                  border: `1.5px solid ${isDone ? "#86efac" : isActive ? "#9333ea" : "#e9d5ff"}`,
+                  boxShadow: isActive ? "0 4px 12px rgba(147,51,234,0.15)" : "none",
+                  transition: "all 0.3s ease"
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                    <span style={{ fontSize: "10px", fontWeight: 900, textTransform: "uppercase", color: isDone ? "#15803d" : isActive ? "#7e22ce" : "#a855f7" }}>
+                      {isDone ? "✓ Done" : isActive ? "▶ Active" : "Pending"}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: "12px", fontWeight: 800, color: isDone ? "#166534" : isActive ? "#581c87" : "#7e22ce", margin: 0, lineHeight: 1.2 }}>
+                    {s.name}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

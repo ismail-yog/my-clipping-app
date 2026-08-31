@@ -344,6 +344,37 @@ class StreamMonitor:
                         break
                 time.sleep(1)
 
+    def _check_stream_fallback(self, streamer: config.StreamerConfig) -> tuple[bool, Optional[dict]]:
+        """Fallback live check using streamlink CLI when API credentials are missing or fail."""
+        try:
+            url = streamer.url
+            if not url:
+                if streamer.platform == "twitch":
+                    url = f"https://www.twitch.tv/{streamer.channel}"
+                elif streamer.platform == "kick":
+                    url = f"https://kick.com/{streamer.channel}"
+                else:
+                    url = f"https://www.youtube.com/@{streamer.channel}/live"
+
+            cmd = ["streamlink", "--json", url]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if r.returncode == 0 and r.stdout:
+                import json
+                data = json.loads(r.stdout)
+                if not data.get("error"):
+                    metadata = data.get("metadata", {})
+                    return True, {
+                        "title": metadata.get("title") or f"{streamer.name} Live Stream",
+                        "game": metadata.get("game") or "Live Stream",
+                        "viewer_count": 0,
+                        "started_at": time.time(),
+                        "thumbnail_url": "",
+                        "stream_url": url,
+                    }
+        except Exception as e:
+            logger.debug("Fallback streamlink check failed for %s: %s", streamer.name, e)
+        return False, None
+
     def _check_streamer(self, streamer: config.StreamerConfig):
         """Check status of a single streamer and trigger callbacks on transitions."""
         key = f"{streamer.platform}:{streamer.channel}"
@@ -362,14 +393,17 @@ class StreamMonitor:
                 is_live, info = self._youtube_api.check_stream(streamer.channel)
             elif streamer.platform == "kick":
                 is_live, info = self._kick_api.check_stream(streamer.channel)
-            else:
-                logger.warning("Unknown streamer platform %s for %s", streamer.platform, streamer.name)
-                return
         except Exception as e:
-            logger.error("API error checking %s (%s): %s", streamer.name, streamer.platform, e)
-            with self._lock:
-                self._stats.api_errors += 1
-            return
+            logger.debug("API check failed for %s (%s): %s", streamer.name, streamer.platform, e)
+
+        # Use fallback check if primary API failed or reported offline
+        if not is_live:
+            try:
+                is_live, info = self._check_stream_fallback(streamer)
+            except Exception as e:
+                logger.error("Fallback check error for %s: %s", streamer.name, e)
+                with self._lock:
+                    self._stats.api_errors += 1
 
         with self._lock:
             self._stats.total_checks += 1

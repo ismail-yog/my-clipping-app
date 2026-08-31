@@ -610,8 +610,19 @@ class Database:
             )
 
     def reset_processing_jobs(self):
-        """Reset any jobs stuck in 'processing' state back to 'pending' on startup."""
+        """Reset stuck processing jobs and purge ancient stale jobs."""
         with self._conn() as conn:
+            cutoff = time.time() - 86400
+            cursor = conn.execute(
+                "DELETE FROM jobs WHERE status IN ('pending', 'scheduled', 'failed', 'processing') AND created_at < ?",
+                (cutoff,),
+            )
+            deleted = cursor.rowcount
+            if deleted > 0:
+                logger.info("Purged %d stale jobs older than 24 hours", deleted)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs (status, scheduled_for, priority, created_at)"
+            )
             conn.execute(
                 "UPDATE jobs SET status = 'pending' WHERE status = 'processing'"
             )

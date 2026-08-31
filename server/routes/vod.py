@@ -67,7 +67,7 @@ async def process_vod(req: VODRequest):
     job_id = tq.submit(
         job_type="vod_process",
         payload={"url": url, "layout_type": layout_type},
-        priority=2,
+        priority=1,
     )
 
     _active_jobs[url] = str(job_id)
@@ -189,5 +189,23 @@ async def get_vod_job_progress(job_id: str):
     """Get progress of a specific VOD job."""
     if job_id in VOD_PROGRESS:
         return VOD_PROGRESS[job_id]
-    # Job may have finished and been cleaned from progress tracker
+
+    db = get_db()
+    try:
+        job_int = int(job_id)
+        job = db.get_job(job_int)
+        if job:
+            status_str = job.get("status", "")
+            url = job.get("payload", {}).get("url", "")
+            if status_str == "completed":
+                return {"url": url, "progress": 100, "status": "completed"}
+            elif status_str == "failed":
+                return {"url": url, "progress": 0, "status": f"Failed: {job.get('error', 'Error')}"}
+            elif status_str == "pending":
+                return {"url": url, "progress": 5, "status": "Queued..."}
+            elif status_str == "processing":
+                return {"url": url, "progress": 50, "status": "Processing..."}
+    except Exception:
+        pass
+
     return {"url": "", "progress": 100, "status": "completed"}

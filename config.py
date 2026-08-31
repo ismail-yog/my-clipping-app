@@ -186,6 +186,12 @@ YOUTUBE_API_VERSION: str = "v3"
 YOUTUBE_SCOPES: list = ["https://www.googleapis.com/auth/youtube.upload"]
 YOUTUBE_CATEGORY_ID: str = "22"  # "People & Blogs"
 
+# ── NVIDIA NIM & AI Foundation API ──────────────────────────────────────────
+
+NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
+NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
+USE_NVENC: bool = os.getenv("USE_NVENC", "true").lower() == "true"
+
 # ── Ollama (Local LLM) ─────────────────────────────────────────────────────
 
 OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")

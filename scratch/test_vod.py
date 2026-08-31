@@ -48,7 +48,7 @@ class TestVODProcessing(unittest.TestCase):
 
     def test_vod_processor_pipeline(self):
         print("\n" + "=" * 60)
-        print("🤖 Running VOD Processor Upgrade Test Suite")
+        print("Running VOD Processor Upgrade Test Suite")
         print("=" * 60)
         
         # We patch processor.run_subprocess to skip downloading since we pre-copy the video
@@ -93,7 +93,7 @@ class TestVODProcessing(unittest.TestCase):
         success = patched_process_url("https://www.youtube.com/watch?v=dummy", job_id="testjob", layout_type="gamer")
         
         self.assertTrue(success, "VOD processing pipeline failed")
-        print("\n🎉 VOD processing pipeline completed successfully!")
+        print("\nVOD processing pipeline completed successfully!")
         
         # Verify that clips were generated and stored in clips/
         generated_clips = list(config.CLIPS_DIR.glob("vod_testvod_*.mp4"))

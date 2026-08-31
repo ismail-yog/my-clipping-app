@@ -54,6 +54,15 @@ class VODProcessRequest(BaseModel):
 async def lifespan(app: FastAPI):
     logger.info("FastAPI server starting")
 
+    # Ensure TaskQueue worker is active
+    try:
+        tq = get_task_queue()
+        if tq and not tq.is_running:
+            tq.start()
+            logger.info("Task queue worker started")
+    except Exception as e:
+        logger.error("Failed to start task queue: %s", e)
+
     # Reset any stuck processing jobs back to pending on startup
     try:
         db = get_db()
@@ -65,7 +74,7 @@ async def lifespan(app: FastAPI):
     # Auto-start pipeline manager for live stream monitoring
     pm = get_pipeline_manager()
     streamers = config.get_streamers()
-    if pm and streamers:
+    if pm and streamers and not pm.is_active:
         logger.info("Auto-starting pipeline manager with %d streamers", len(streamers))
         try:
             pm.start(streamers)
@@ -331,6 +340,8 @@ async def health():
     return {"status": "ok", "timestamp": time.time()}
 
 
+from server.routes import auth, settings, ws, status, streamers, clips, uploads, jobs, vod, dreamteam
+
 # ── Include Modular Sub-Routers ─────────────────────────────────────────────
 
 app.include_router(ws.router, tags=["WebSocket"])
@@ -342,6 +353,7 @@ app.include_router(jobs.router, prefix="/api", tags=["Jobs"])
 app.include_router(vod.router, prefix="/api/vod", tags=["VOD"])
 app.include_router(auth.router, prefix="/api", tags=["Auth"])
 app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
+app.include_router(dreamteam.router, prefix="/api/dreamteam", tags=["Dream Team"])
 
 
 def create_app() -> FastAPI:

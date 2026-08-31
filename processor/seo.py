@@ -4,6 +4,7 @@ Generates YouTube Shorts metadata (titles, descriptions, tags, hooks, thumbnail 
 using a local Ollama instance or static templates as fallback.
 """
 
+import os
 import json
 import logging
 from typing import Optional
@@ -28,16 +29,31 @@ class SEOMetadata:
 
 
 class SEOGenerator:
-    """Generates viral, search-optimized video metadata."""
+    """Generates viral, search-optimized video metadata using NVIDIA NIMs, Ollama, or templates."""
 
     def __init__(self):
+        self.nvidia_api_key = getattr(config, "NVIDIA_API_KEY", "") or os.environ.get("NVIDIA_API_KEY", "")
+        self.nvidia_model = getattr(config, "NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
         self.ollama_host = getattr(config, "OLLAMA_HOST", "http://localhost:11434")
         self.model = getattr(config, "OLLAMA_MODEL", "llama3")
         self.fallback_model = getattr(config, "OLLAMA_FALLBACK_MODEL", "mistral")
 
     def generate(self, transcript: str, streamer_name: str, emotion: str, platform: str) -> SEOMetadata:
-        """Generate metadata using primary Ollama model, fallback model, or templates."""
+        """Generate metadata using NVIDIA NIM Blueprint API, Ollama, or templates."""
         prompt = self._build_prompt(transcript, streamer_name, emotion, platform)
+
+        # 0. Try NVIDIA NIM Cloud Endpoint (Meta Llama 3.1 70B / Nemotron)
+        if self.nvidia_api_key:
+            try:
+                logger.info("Requesting SEO metadata from NVIDIA NIM model: %s", self.nvidia_model)
+                response = self._call_nvidia_nim(prompt, self.nvidia_model)
+                if response:
+                    meta = self._parse_response(response)
+                    if meta:
+                        meta.generated_by = "nvidia_nim"
+                        return meta
+            except Exception as e:
+                logger.warning("NVIDIA NIM call (%s) failed: %s", self.nvidia_model, e)
 
         # 1. Try primary Ollama model
         try:
@@ -62,8 +78,36 @@ class SEOGenerator:
             logger.warning("Fallback Ollama model (%s) failed: %s", self.fallback_model, e)
 
         # 3. Fallback to static template-based generation
-        logger.info("Ollama unavailable or failed — falling back to template-based SEO")
+        logger.info("NVIDIA NIM / Ollama unavailable — falling back to template-based SEO")
         return self._template_generate(transcript, streamer_name, emotion)
+
+    def _call_nvidia_nim(self, prompt: str, model: str) -> Optional[str]:
+        """Execute HTTP POST request to NVIDIA NIM / AI Foundation OpenAPI endpoint."""
+        url = "https://integrate.api.nvidia.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.nvidia_api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.5,
+            "max_tokens": 1024,
+            "stream": False,
+        }
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            if resp.status_code == 200:
+                json_data = resp.json()
+                choices = json_data.get("choices", [])
+                if choices:
+                    return choices[0].get("message", {}).get("content", "")
+            else:
+                logger.error("NVIDIA NIM request failed with HTTP %d: %s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            logger.error("NVIDIA NIM request exception: %s", e)
+        return None
 
     def _call_ollama(self, prompt: str, model: str) -> Optional[str]:
         """Execute HTTP POST call to the local Ollama api/generate endpoint."""
