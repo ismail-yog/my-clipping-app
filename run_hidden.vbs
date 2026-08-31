@@ -1,13 +1,17 @@
+Set fso = CreateObject("Scripting.FileSystemObject")
 Set WshShell = CreateObject("WScript.Shell")
-strRootDir = "C:\Users\ismai\.gemini\antigravity\scratch\streamclipper"
+
+' Dynamically resolve script directory so no paths are hardcoded
+strRootDir = fso.GetParentFolderName(WScript.ScriptFullName)
 WshShell.CurrentDirectory = strRootDir
 
-' Kill existing processes first
-WshShell.Run "powershell -Command ""Stop-Process -Id (Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue; Stop-Process -Id (Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue""", 0, True
+' Kill existing processes holding ports 8000 (Backend) and 3000 (Frontend)
+WshShell.Run "powershell -WindowStyle Hidden -Command ""Stop-Process -Id (Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue; Stop-Process -Id (Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue""", 0, True
 
-' Start Backend hidden
-WshShell.Run "python main.py", 0, False
+' Start Backend hidden using PATH resolution
+WshShell.CurrentDirectory = strRootDir
+WshShell.Run "cmd /c python main.py", 0, False
 
-' Start Frontend hidden
+' Start Frontend hidden using PATH resolution
 WshShell.CurrentDirectory = strRootDir & "\frontend"
-WshShell.Run "cmd /c ""C:\Program Files\nodejs\npm.cmd"" run dev", 0, False
+WshShell.Run "cmd /c npm run dev", 0, False

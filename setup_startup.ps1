@@ -1,6 +1,21 @@
+$scriptDir = $PSScriptRoot
+if (-not $scriptDir) {
+    $scriptDir = (Get-Location).Path
+}
+
 $WshShell = New-Object -ComObject WScript.Shell
-$path = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\StreamClipLauncher.lnk'
-$Shortcut = $WshShell.CreateShortcut($path)
-$Shortcut.TargetPath = 'C:\Users\ismai\.gemini\antigravity\scratch\streamclipper\run_hidden.vbs'
+$startupDir = [System.Environment]::GetFolderPath('Startup')
+$shortcutPath = Join-Path $startupDir 'StreamClipLauncher.lnk'
+
+$targetVbs = Join-Path $scriptDir 'run_hidden.vbs'
+
+$Shortcut = $WshShell.CreateShortcut($shortcutPath)
+$Shortcut.TargetPath = $targetVbs
+$Shortcut.WorkingDirectory = $scriptDir
+$Shortcut.Description = "StreamClip AI Autonomous Daemon"
 $Shortcut.Save()
-Write-Host "Startup shortcut created at: $path"
+
+Write-Host "[OK] Windows Startup Shortcut Registered Successfully"
+Write-Host "     Shortcut Location: $shortcutPath"
+Write-Host "     Target VBS:        $targetVbs"
+Write-Host "     Working Directory: $scriptDir"
