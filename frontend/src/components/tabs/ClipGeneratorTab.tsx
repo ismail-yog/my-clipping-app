@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import {
@@ -66,6 +66,11 @@ export default function ClipGeneratorTab() {
   const [previewClip, setPreviewClip] = useState<any>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const activeJobRef = useRef<any>(activeJob);
+  useEffect(() => {
+    activeJobRef.current = activeJob;
+  }, [activeJob]);
+
   // Poll for job progress
   useEffect(() => {
     let interval: any;
@@ -75,9 +80,9 @@ export default function ClipGeneratorTab() {
         const rawJobs = data.progress || data.jobs || {};
         const jobs = Object.entries(rawJobs);
         if (jobs.length > 0) {
-          // Find matching job or pick latest
-          let targetJob = activeJob?.id && rawJobs[activeJob.id]
-            ? { id: activeJob.id, ...rawJobs[activeJob.id] }
+          const currentId = activeJobRef.current?.id;
+          let targetJob = currentId && rawJobs[currentId]
+            ? { id: currentId, ...rawJobs[currentId] }
             : null;
 
           if (!targetJob) {
@@ -103,7 +108,7 @@ export default function ClipGeneratorTab() {
     checkProgress();
     interval = setInterval(checkProgress, 1500);
     return () => clearInterval(interval);
-  }, [activeJob?.id]);
+  }, []);
 
   const loadRecentClips = async () => {
     try {
