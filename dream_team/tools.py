@@ -1,14 +1,16 @@
 """Dream Team — Shared Tool Functions
 Utility functions that any agent can register and call via use_tool().
 Covers video helpers, text analysis, profanity filtering, and formatting.
+Uses production subprocess execution with strict timeouts and memory cleanup.
 """
 import json
 import logging
 import os
 import re
-import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from processor.subprocess_utils import run_command_safely, safe_unlink, free_vram
 
 logger = logging.getLogger("dreamteam.tools")
 
@@ -18,22 +20,19 @@ logger = logging.getLogger("dreamteam.tools")
 # ══════════════════════════════════════════════════════════════════════
 
 def get_video_duration(path: str) -> Optional[float]:
-    """Return the duration of a video file in seconds using ffprobe.
-
-    Returns None if ffprobe fails or the file doesn't exist.
-    """
-    path = str(path)
-    if not Path(path).exists():
+    """Return the duration of a video file in seconds using ffprobe safely."""
+    path_obj = Path(str(path))
+    if not path_obj.exists():
         logger.warning("get_video_duration: file not found — %s", path)
         return None
     try:
-        result = subprocess.run(
+        result = run_command_safely(
             [
                 "ffprobe", "-v", "quiet",
                 "-print_format", "json",
-                "-show_format", path,
+                "-show_format", str(path_obj),
             ],
-            capture_output=True, text=True, timeout=15,
+            timeout=15.0,
         )
         data = json.loads(result.stdout)
         duration = float(data["format"]["duration"])
@@ -45,33 +44,24 @@ def get_video_duration(path: str) -> Optional[float]:
 
 
 def extract_frame(video_path: str, timestamp: float, output_path: Optional[str] = None) -> Optional[str]:
-    """Extract a single frame from *video_path* at *timestamp* seconds.
-
-    Args:
-        video_path: Path to the source video.
-        timestamp: Time in seconds to extract the frame.
-        output_path: Where to save the frame (default: same dir, ``_frame.jpg``).
-
-    Returns:
-        The output path on success, or None on failure.
-    """
-    video_path = Path(video_path)
-    if not video_path.exists():
+    """Extract a single frame from *video_path* at *timestamp* seconds."""
+    video_path_obj = Path(str(video_path))
+    if not video_path_obj.exists():
         logger.warning("extract_frame: file not found — %s", video_path)
         return None
 
     if output_path is None:
-        output_path = str(video_path.parent / f"{video_path.stem}_frame.jpg")
+        output_path = str(video_path_obj.parent / f"{video_path_obj.stem}_frame.jpg")
 
     try:
-        subprocess.run(
+        run_command_safely(
             [
                 "ffmpeg", "-y", "-ss", str(timestamp),
-                "-i", str(video_path),
+                "-i", str(video_path_obj),
                 "-vframes", "1", "-q:v", "2",
                 str(output_path),
             ],
-            capture_output=True, timeout=15,
+            timeout=15.0,
         )
         if Path(output_path).exists():
             logger.debug("Frame extracted → %s", output_path)
@@ -84,14 +74,14 @@ def extract_frame(video_path: str, timestamp: float, output_path: Optional[str] 
 def get_video_resolution(path: str) -> Optional[Dict[str, int]]:
     """Return ``{"width": …, "height": …}`` for a video file."""
     try:
-        result = subprocess.run(
+        result = run_command_safely(
             [
                 "ffprobe", "-v", "quiet",
                 "-print_format", "json",
                 "-show_streams", "-select_streams", "v:0",
                 str(path),
             ],
-            capture_output=True, text=True, timeout=15,
+            timeout=15.0,
         )
         data = json.loads(result.stdout)
         stream = data["streams"][0]
@@ -102,167 +92,111 @@ def get_video_resolution(path: str) -> Optional[Dict[str, int]]:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# Text analysis
+# Text & NLP helpers
 # ══════════════════════════════════════════════════════════════════════
 
-def count_words(text: str) -> int:
-    """Count the number of whitespace-delimited words in *text*."""
-    return len(text.split())
+# Common English profanities / slurs list for moderation
+PROFANITY_LIST = {
+    "fuck", "shit", "bitch", "asshole", "bastard", "cunt",
+    "dick", "pussy", "fag", "faggot", "nigger", "nigga",
+    "retard", "slut", "whore", "cock", "tits", "motherfucker",
+}
 
 
-def detect_language(text: str) -> str:
-    """Simple heuristic language detection.
+def check_profanity(text: str) -> Dict[str, Any]:
+    """Check text for profane words."""
+    if not text:
+        return {"clean": True, "count": 0, "flagged_words": []}
 
-    Returns an ISO 639-1 code (e.g. ``"en"``, ``"es"``, ``"fr"``).
-    Falls back to ``"en"`` if unsure.
-    """
-    # Very small sample → default
-    if not text or len(text) < 20:
-        return "en"
+    words = re.findall(r"\b\w+\b", text.lower())
+    flagged = [w for w in words if w in PROFANITY_LIST]
 
-    text_lower = text.lower()
-
-    # Spanish markers
-    spanish_markers = ["el ", "la ", "los ", "las ", "de ", "que ", "en ", "por ", "para ",
-                       "con ", "una ", "como ", "pero ", "más ", "este ", "esta "]
-    # French markers
-    french_markers = ["le ", "la ", "les ", "de ", "des ", "un ", "une ", "que ",
-                      "est ", "dans ", "pour ", "avec ", "sur ", "pas ", "ce "]
-    # German markers
-    german_markers = ["der ", "die ", "das ", "und ", "ist ", "ein ", "eine ",
-                      "für ", "mit ", "auf ", "den ", "dem ", "nicht "]
-    # Portuguese markers
-    portuguese_markers = ["o ", "a ", "os ", "as ", "de ", "que ", "em ",
-                          "um ", "uma ", "para ", "com ", "não ", "por "]
-
-    scores = {
-        "es": sum(1 for m in spanish_markers if m in text_lower),
-        "fr": sum(1 for m in french_markers if m in text_lower),
-        "de": sum(1 for m in german_markers if m in text_lower),
-        "pt": sum(1 for m in portuguese_markers if m in text_lower),
+    return {
+        "clean": len(flagged) == 0,
+        "count": len(flagged),
+        "flagged_words": list(set(flagged)),
     }
 
-    best = max(scores, key=scores.get)
-    if scores[best] >= 3:
-        return best
-    return "en"
+
+def extract_keywords(text: str, top_n: int = 5) -> List[str]:
+    """Extract most frequent non-stop words from text."""
+    if not text:
+        return []
+
+    stopwords = {
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "by", "from", "up", "about", "into", "over", "after",
+        "is", "are", "was", "were", "be", "been", "being", "have", "has",
+        "had", "do", "does", "did", "i", "you", "he", "she", "it", "we",
+        "they", "what", "which", "who", "this", "that", "these", "those",
+        "my", "your", "his", "her", "its", "our", "their", "not", "no",
+        "so", "very", "just", "like", "im", "dont", "cant", "thats", "theres",
+    }
+
+    words = re.findall(r"\b[a-zA-Z]{3,}\b", text.lower())
+    filtered = [w for w in words if w not in stopwords]
+
+    freq: Dict[str, int] = {}
+    for w in filtered:
+        freq[w] = freq.get(w, 0) + 1
+
+    sorted_words = sorted(freq.items(), key=lambda item: item[1], reverse=True)
+    return [w for w, _ in sorted_words[:top_n]]
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Content safety
-# ══════════════════════════════════════════════════════════════════════
+def calculate_hook_strength(title: str) -> Dict[str, Any]:
+    """Score title based on hook heuristics."""
+    if not title:
+        return {"score": 0.0, "feedback": ["Title is empty"]}
 
-# Basic profanity word list (kept deliberately short & PG-13).
-_PROFANITY_LIST = {
-    "fuck", "shit", "bitch", "ass", "damn", "crap", "dick", "piss",
-    "bastard", "slut", "whore", "cock", "cunt", "twat", "wanker",
-    "asshole", "bullshit", "motherfucker", "nigger", "nigga", "faggot",
-    "retard", "retarded",
-}
+    score = 0.5
+    feedback: List[str] = []
 
-# Compiled regex for whole-word matching
-_PROFANITY_PATTERN = re.compile(
-    r"\b(" + "|".join(re.escape(w) for w in _PROFANITY_LIST) + r")\b",
-    re.IGNORECASE,
-)
+    words = title.split()
+    if 3 <= len(words) <= 9:
+        score += 0.15
+        feedback.append("Good word count for short video hook (3-9 words)")
+    elif len(words) < 3:
+        score -= 0.1
+        feedback.append("Title too short — lack of curiosity gap")
+    else:
+        score -= 0.1
+        feedback.append("Title too long for quick hook impact")
 
+    power_words = [
+        "never", "secret", "insane", "how to", "why", "stop", "biggest",
+        "worst", "best", "finally", "exposed", "truth", "unbelievable",
+        "clutch", "impossible", "ruined", "broke", "won", "lost", "nobody",
+    ]
+    title_lower = title.lower()
+    found_power = [w for w in power_words if w in title_lower]
+    if found_power:
+        score += min(0.2, len(found_power) * 0.1)
+        feedback.append(f"Power words detected: {', '.join(found_power)}")
+    else:
+        feedback.append("No common power words found — add curiosity triggers")
 
-def is_profane(text: str) -> bool:
-    """Return True if *text* contains profanity from the built-in word list."""
-    return bool(_PROFANITY_PATTERN.search(text))
+    if "?" in title:
+        score += 0.05
+        feedback.append("Question format creates curiosity")
 
+    if any(ch.isdigit() for ch in title):
+        score += 0.05
+        feedback.append("Contains numbers (increases specificity)")
 
-def censor_profanity(text: str) -> str:
-    """Replace profane words with asterisks (e.g. ``f***``)."""
-    def _mask(match):
-        word = match.group(0)
-        if len(word) <= 2:
-            return "*" * len(word)
-        return word[0] + "*" * (len(word) - 2) + word[-1]
-    return _PROFANITY_PATTERN.sub(_mask, text)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Formatting helpers
-# ══════════════════════════════════════════════════════════════════════
-
-def format_duration(seconds: float) -> str:
-    """Convert seconds to ``MM:SS`` or ``HH:MM:SS`` string."""
-    seconds = int(seconds)
-    if seconds < 3600:
-        return f"{seconds // 60}:{seconds % 60:02d}"
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    secs = seconds % 60
-    return f"{hours}:{minutes:02d}:{secs:02d}"
-
-
-def truncate_text(text: str, max_length: int = 100, suffix: str = "…") -> str:
-    """Truncate *text* to *max_length* characters, adding *suffix* if trimmed."""
-    if len(text) <= max_length:
-        return text
-    return text[: max_length - len(suffix)].rstrip() + suffix
+    final_score = round(max(0.0, min(1.0, score)), 2)
+    return {
+        "score": final_score,
+        "rating": "strong" if final_score >= 0.7 else "medium" if final_score >= 0.4 else "weak",
+        "feedback": feedback,
+    }
 
 
-def slugify(text: str) -> str:
-    """Convert text to a URL/filename-safe slug."""
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-{2,}", "-", text)
-    return text.strip("-")
-
-
-# ══════════════════════════════════════════════════════════════════════
-# File helpers
-# ══════════════════════════════════════════════════════════════════════
-
-def safe_read_json(path: str) -> Optional[Dict[str, Any]]:
-    """Read and parse a JSON file, returning None on any error."""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as exc:
-        logger.warning("safe_read_json(%s) failed: %s", path, exc)
-        return None
-
-
-def safe_write_json(path: str, data: Any, indent: int = 2) -> bool:
-    """Write *data* as JSON to *path*. Returns True on success."""
-    try:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=indent, ensure_ascii=False)
-        return True
-    except Exception as exc:
-        logger.error("safe_write_json(%s) failed: %s", path, exc)
-        return False
-
-
-def get_file_size_mb(path: str) -> Optional[float]:
-    """Return the file size in megabytes, or None if the file doesn't exist."""
-    p = Path(path)
-    if p.exists():
-        return p.stat().st_size / (1024 * 1024)
-    return None
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Registry — convenient dict of all tools for agent registration
-# ══════════════════════════════════════════════════════════════════════
-
-TOOL_REGISTRY: Dict[str, callable] = {
-    "get_video_duration": get_video_duration,
-    "extract_frame": extract_frame,
-    "get_video_resolution": get_video_resolution,
-    "count_words": count_words,
-    "detect_language": detect_language,
-    "is_profane": is_profane,
-    "censor_profanity": censor_profanity,
-    "format_duration": format_duration,
-    "truncate_text": truncate_text,
-    "slugify": slugify,
-    "safe_read_json": safe_read_json,
-    "safe_write_json": safe_write_json,
-    "get_file_size_mb": get_file_size_mb,
-}
+def format_hashtag_string(tags: List[str]) -> str:
+    """Format tags list into hashtag string."""
+    clean_tags = []
+    for t in tags:
+        clean = re.sub(r"[^\w]", "", t.strip())
+        if clean:
+            clean_tags.append(f"#{clean}")
+    return " ".join(clean_tags)

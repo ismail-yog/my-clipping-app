@@ -1,18 +1,27 @@
 """
 StreamClipper — Clipper
 Extracts highlight clips, crops to 9:16 portrait, and burns viral-style captions.
+Enforces integer millisecond timestamp calculations and CFR transcoding to avoid A/V desynchronization.
 """
 
 import os
 import time
 import json
 import logging
-import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List
+from typing import Optional, List, Dict, Any, Union
 
 import config
+from processor.subprocess_utils import (
+    run_command_safely,
+    safe_unlink,
+    ms_to_ass_timestamp,
+    ms_to_timestamp,
+    seconds_to_ms,
+    SubprocessExecutionError,
+    MediaProcessingError,
+)
 
 logger = logging.getLogger("streamclipper.processor.clipper")
 
@@ -32,7 +41,7 @@ class ClipMetadata:
     tags: list = field(default_factory=list)
     seo_ready: bool = False
 
-    # Optional fields for backward compatibility
+    # Fields for pipeline tracking
     source_streamer: str = "vod"
     source_platform: str = "custom"
     timestamp: float = field(default_factory=time.time)
@@ -55,58 +64,73 @@ class Clipper:
         self,
         source_video: Path,
         streamer: Optional[config.StreamerConfig],
-        start_offset: float,
-        duration: int,
+        start_offset: Union[int, float],
+        duration: Union[int, float],
         moment_score: float,
         transcript_segments: Optional[list] = None,
         emotion: str = "",
         custom_clip_id: Optional[str] = None,
-        layout_type: str = "gamer"
+        layout_type: str = "gamer",
     ) -> Optional[ClipMetadata]:
         """
         Create a processed clip from source video.
-        1. Cut the segment
-        2. Reframe to 9:16 vertical
-        3. Burn animated captions if transcript is provided
+        Uses exact millisecond offsets and CFR conversion.
         """
         streamer_name = streamer.name if streamer else "vod"
         clip_id = custom_clip_id or f"{streamer_name}_{int(time.time())}"
         output_path = config.CLIPS_DIR / f"{clip_id}.mp4"
 
-        logger.info("Creating clip: %s (duration=%ds, start_offset=%.1fs)", clip_id, duration, start_offset)
+        start_offset_ms = seconds_to_ms(start_offset)
+        duration_ms = seconds_to_ms(duration)
+
+        logger.info(
+            "Creating clip: %s (duration_ms=%d, start_offset_ms=%d)",
+            clip_id, duration_ms, start_offset_ms,
+        )
 
         temp_cut = config.CLIPS_DIR / f"{clip_id}_temp_cut.mp4"
 
         try:
-            # Step 1: Cut segment with ffmpeg (using stream copy for speed)
+            # Step 1: Cut segment with ffmpeg (re-encode with CFR 60fps for accurate keyframe alignment)
+            start_ts = ms_to_timestamp(start_offset_ms)
+            duration_ts = ms_to_timestamp(duration_ms)
+
             cut_cmd = [
                 "ffmpeg", "-y",
-                "-ss", str(start_offset),
+                "-ss", start_ts,
                 "-i", str(source_video),
-                "-t", str(duration),
-                "-c", "copy",
-                str(temp_cut)
+                "-t", duration_ts,
+                "-vf", "fps=fps=60",
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-crf", "18",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                str(temp_cut),
             ]
-            r = subprocess.run(cut_cmd, capture_output=True, text=True, timeout=60)
-            if r.returncode != 0 or not temp_cut.exists():
-                logger.error("FFmpeg cut failed: %s", r.stderr)
+            run_command_safely(cut_cmd, timeout=90.0)
+
+            if not temp_cut.exists() or temp_cut.stat().st_size == 0:
+                logger.error("FFmpeg cut produced empty or missing file for %s", clip_id)
                 return None
 
             # Step 2: Reframe to 9:16 (1080x1920)
             reframe_cmd = [
                 "ffmpeg", "-y",
                 "-i", str(temp_cut),
-                "-vf", f"scale={self.settings.output_width}:{self.settings.output_height}:force_original_aspect_ratio=increase,crop={self.settings.output_width}:{self.settings.output_height}",
+                "-vf", f"scale={self.settings.output_width}:{self.settings.output_height}:force_original_aspect_ratio=increase,crop={self.settings.output_width}:{self.settings.output_height},fps=fps=60",
                 "-c:v", self.settings.video_codec,
                 "-preset", "medium",
                 "-crf", str(self.settings.crf),
                 "-c:a", self.settings.audio_codec,
                 "-b:a", "128k",
-                str(output_path)
+                "-movflags", "+faststart",
+                str(output_path),
             ]
-            r = subprocess.run(reframe_cmd, capture_output=True, text=True, timeout=120)
-            if r.returncode != 0 or not output_path.exists():
-                logger.error("FFmpeg reframe failed: %s", r.stderr)
+            run_command_safely(reframe_cmd, timeout=120.0)
+
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                logger.error("FFmpeg reframe produced empty or missing file for %s", clip_id)
                 return None
 
             # Step 3: Burn captions if transcript is provided
@@ -115,13 +139,12 @@ class Clipper:
             burn_enabled = getattr(config.vod_settings, "burn_captions", True)
 
             if transcript_segments and burn_enabled:
-                ass_path = self._generate_ass_captions(clip_id, transcript_segments)
+                ass_path = self._generate_ass_captions(clip_id, transcript_segments, base_offset_ms=start_offset_ms)
                 if ass_path:
                     captioned_path = self._burn_captions(output_path, ass_path)
                     if captioned_path:
                         has_captions = True
-                
-                # Extract clean transcript text
+
                 texts = []
                 for s in transcript_segments:
                     if hasattr(s, "text"):
@@ -133,13 +156,13 @@ class Clipper:
             metadata = ClipMetadata(
                 clip_id=clip_id,
                 clip_path=str(output_path),
-                duration=float(duration),
+                duration=float(duration_ms / 1000.0),
                 moment_score=moment_score,
                 transcript=transcript_text,
                 has_captions=has_captions,
                 emotion=emotion,
                 source_streamer=streamer_name,
-                source_platform=streamer.platform if streamer else "custom"
+                source_platform=streamer.platform if streamer else "custom",
             )
 
             # Save metadata JSON sidecar
@@ -151,23 +174,27 @@ class Clipper:
             logger.info("Clip creation successful: %s", output_path.name)
             return metadata
 
+        except SubprocessExecutionError as err:
+            logger.error("FFmpeg subprocess failed for %s: %s", clip_id, err.stderr)
+            safe_unlink(output_path)
+            return None
         except Exception as e:
             logger.error("Error during clip creation for %s: %s", clip_id, e, exc_info=True)
+            safe_unlink(output_path)
             return None
         finally:
-            # Cleanup temp file
-            if temp_cut.exists():
-                try:
-                    temp_cut.unlink()
-                except Exception:
-                    pass
+            safe_unlink(temp_cut)
 
-    def _generate_ass_captions(self, clip_id: str, transcript_segments: list) -> Optional[Path]:
+    def _generate_ass_captions(
+        self,
+        clip_id: str,
+        transcript_segments: list,
+        base_offset_ms: int = 0,
+    ) -> Optional[Path]:
         """Generate a .ass subtitle file with word-by-word highlighting and pop-in animation."""
         s = self.settings
         ass_path = config.CLIPS_DIR / f"{clip_id}.ass"
 
-        # ASS Header and Styles
         header = f"""[Script Info]
 Title: {clip_id}
 ScriptType: v4.00+
@@ -177,7 +204,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,250,0
+Style: Default,Arial Black,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,30,30,220,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -192,37 +219,38 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             elif isinstance(seg, dict) and "words" in seg:
                 all_words.extend(seg["words"])
 
-        # Group words into 3-5 word chunks
+        # Group words into chunks
         chunks = []
         current_chunk = []
         for w in all_words:
-            w_word = w.word if hasattr(w, "word") else w.get("word", "")
-            w_start = w.start if hasattr(w, "start") else w.get("start", 0.0)
-            w_end = w.end if hasattr(w, "end") else w.get("end", 0.0)
-            w_prob = w.probability if hasattr(w, "probability") else w.get("probability", 1.0)
-            
-            w_dict = {"word": w_word, "start": w_start, "end": w_end, "prob": w_prob}
-            
-            if current_chunk and (w_dict["start"] - current_chunk[-1]["end"] > 1.5 or len(current_chunk) >= 4):
+            w_word = getattr(w, "word", None) or (w.get("word", "") if isinstance(w, dict) else "")
+            w_start_sec = getattr(w, "start", None) if hasattr(w, "start") else (w.get("start", 0.0) if isinstance(w, dict) else 0.0)
+            w_end_sec = getattr(w, "end", None) if hasattr(w, "end") else (w.get("end", 0.0) if isinstance(w, dict) else 0.0)
+            w_prob = getattr(w, "probability", 1.0) if hasattr(w, "probability") else (w.get("probability", 1.0) if isinstance(w, dict) else 1.0)
+
+            w_start_ms = max(0, seconds_to_ms(w_start_sec) - base_offset_ms)
+            w_end_ms = max(w_start_ms + 10, seconds_to_ms(w_end_sec) - base_offset_ms)
+
+            w_dict = {"word": w_word, "start_ms": w_start_ms, "end_ms": w_end_ms, "prob": w_prob}
+
+            if current_chunk and (w_dict["start_ms"] - current_chunk[-1]["end_ms"] > 1500 or len(current_chunk) >= 4):
                 chunks.append(current_chunk)
                 current_chunk = []
             current_chunk.append(w_dict)
-            
+
         if current_chunk:
             chunks.append(current_chunk)
 
         if chunks:
-            # Word-by-word highlights
             for chunk in chunks:
                 for i, active_word in enumerate(chunk):
-                    start_ts = self._seconds_to_ass_time(active_word["start"])
-                    end_ts = self._seconds_to_ass_time(active_word["end"])
+                    start_ts = ms_to_ass_timestamp(active_word["start_ms"])
+                    end_ts = ms_to_ass_timestamp(active_word["end_ms"])
 
                     text_parts = []
                     for j, w in enumerate(chunk):
-                        word_str = w["word"].upper()
+                        word_str = str(w["word"]).strip().upper()
                         if j == i:
-                            # Yellow text, bold, slightly scaled up
                             text_parts.append(f"{{\\b1\\fscx115\\fscy115\\3c&H00FFFF&}}{word_str}{{\\r}}")
                         else:
                             text_parts.append(word_str)
@@ -230,14 +258,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     full_text = " ".join(text_parts)
                     lines.append(f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{full_text}")
         else:
-            # Fallback to segment level
             for seg in transcript_segments:
-                seg_text = seg.text if hasattr(seg, "text") else seg.get("text", "")
-                seg_start = seg.start if hasattr(seg, "start") else seg.get("start", 0.0)
-                seg_end = seg.end if hasattr(seg, "end") else seg.get("end", 0.0)
-                
-                start_ts = self._seconds_to_ass_time(seg_start)
-                end_ts = self._seconds_to_ass_time(seg_end)
+                seg_text = getattr(seg, "text", "") if hasattr(seg, "text") else (seg.get("text", "") if isinstance(seg, dict) else "")
+                seg_start_sec = getattr(seg, "start", 0.0) if hasattr(seg, "start") else (seg.get("start", 0.0) if isinstance(seg, dict) else 0.0)
+                seg_end_sec = getattr(seg, "end", 0.0) if hasattr(seg, "end") else (seg.get("end", 0.0) if isinstance(seg, dict) else 0.0)
+
+                start_ms = max(0, seconds_to_ms(seg_start_sec) - base_offset_ms)
+                end_ms = max(start_ms + 10, seconds_to_ms(seg_end_sec) - base_offset_ms)
+
+                start_ts = ms_to_ass_timestamp(start_ms)
+                end_ts = ms_to_ass_timestamp(end_ms)
                 lines.append(f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{seg_text}")
 
         try:
@@ -251,10 +281,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def _burn_captions(self, video_path: Path, ass_path: Path) -> Optional[Path]:
         """Burn ASS subtitles into the video using ffmpeg."""
         output_captioned = video_path.parent / f"{video_path.stem}_captioned.mp4"
-        
-        # Format the ASS path for the ffmpeg subtitle filter (handle Windows escaping)
         ass_filter_path = str(ass_path.absolute()).replace("\\", "/").replace(":", "\\:")
-        
+
         burn_cmd = [
             "ffmpeg", "-y",
             "-i", str(video_path),
@@ -262,49 +290,35 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "-c:v", self.settings.video_codec,
             "-crf", str(self.settings.crf),
             "-c:a", "copy",
-            str(output_captioned)
+            "-movflags", "+faststart",
+            str(output_captioned),
         ]
 
         try:
-            r = subprocess.run(burn_cmd, capture_output=True, text=True, timeout=120)
-            if r.returncode != 0 or not output_captioned.exists():
-                logger.error("FFmpeg burn captions failed: %s", r.stderr)
-                return None
-            
-            # Replace original video with captioned version
-            try:
-                video_path.unlink()
-                output_captioned.rename(video_path)
-            except Exception as e:
-                logger.error("Failed to overwrite video with captioned version: %s", e)
+            run_command_safely(burn_cmd, timeout=120.0)
+            if not output_captioned.exists() or output_captioned.stat().st_size == 0:
+                logger.error("FFmpeg burn captions produced empty or missing file.")
                 return None
 
+            video_path.unlink(missing_ok=True)
+            output_captioned.rename(video_path)
             return video_path
+        except SubprocessExecutionError as err:
+            logger.error("Exception burning captions: %s", err.stderr)
+            safe_unlink(output_captioned)
+            return None
         except Exception as e:
             logger.error("Exception burning captions: %s", e)
+            safe_unlink(output_captioned)
             return None
         finally:
-            # Clean up .ass file
-            if ass_path.exists():
-                try:
-                    ass_path.unlink()
-                except Exception:
-                    pass
-
-    @staticmethod
-    def _seconds_to_ass_time(seconds: float) -> str:
-        """Convert float seconds to ASS timestamp format (H:MM:SS.CC)."""
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = int(seconds % 60)
-        cs = int((seconds % 1) * 100)
-        return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+            safe_unlink(ass_path)
 
     @property
-    def clips(self) -> list[ClipMetadata]:
+    def clips(self) -> List[ClipMetadata]:
         return list(self._clips)
 
     @property
-    def recent_clips(self) -> list[ClipMetadata]:
+    def recent_clips(self) -> List[ClipMetadata]:
         cutoff = time.time() - 3600
         return [c for c in self._clips if c.timestamp >= cutoff]

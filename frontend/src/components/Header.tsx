@@ -1,45 +1,94 @@
 "use client";
 
-type Props = {
+import React, { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import {
+  Activity,
+  Bell,
+  Sparkles,
+  Radio,
+  Clock,
+  ShieldCheck,
+  RefreshCw,
+} from "lucide-react";
+
+interface HeaderProps {
   connected: boolean;
   onToggleSidebar: () => void;
   title: string;
-};
+}
 
-export default function Header({ connected, onToggleSidebar, title }: Props) {
+export default function Header({ connected, onToggleSidebar, title }: HeaderProps) {
+  const [timeStr, setTimeStr] = useState("");
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setTimeStr(
+        now.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        })
+      );
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
-    <header className="top-header">
-      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-        <button
-          onClick={onToggleSidebar}
-          className="icon-btn"
-          title="Toggle sidebar"
+    <header className="sticky top-0 z-30 flex items-center justify-between px-8 py-4 bg-[#07090e]/80 backdrop-blur-xl border-b border-white/5">
+      {/* ── Page Title & Breadcrumb ───────────────── */}
+      <div className="flex items-center gap-3">
+        <motion.h1
+          key={title}
+          initial={{ opacity: 0, y: -5 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-2xl font-black text-white tracking-tight"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
-        </button>
-        <h2 className="header-title">{title}</h2>
+          {title}
+        </motion.h1>
+        <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+          PRO PIPELINE
+        </span>
       </div>
 
-      <div className="header-search">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input placeholder="Search clips, streamers..." />
-      </div>
-
-      <div className="header-actions">
-        <div className="status-pill">
-          <div className="status-dot" style={{ background: connected ? "#22c55e" : "#ef4444", boxShadow: connected ? "0 0 0 3px #dcfce7" : "0 0 0 3px #fee2e2" }} />
-          {connected ? "Backend Connected" : "Offline"}
+      {/* ── Live Hub Indicators ───────────────────── */}
+      <div className="flex items-center gap-4">
+        {/* Real-time Clock */}
+        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 font-mono text-xs text-slate-400">
+          <Clock className="w-3.5 h-3.5 text-indigo-400" />
+          <span>{timeStr || "00:00:00"}</span>
         </div>
 
-        <button className="icon-btn">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-          <span className="badge-dot" />
-        </button>
+        {/* WebSocket Connection Radar */}
+        <div
+          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border text-xs font-bold transition-all ${
+            connected
+              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-sm shadow-emerald-500/10"
+              : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+          }`}
+        >
+          <span className="relative flex h-2 w-2">
+            {connected && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            )}
+            <span
+              className={`relative inline-flex rounded-full h-2 w-2 ${
+                connected ? "bg-emerald-500" : "bg-rose-500"
+              }`}
+            />
+          </span>
+          <span>{connected ? "LIVE WEBSOCKET" : "CONNECTING"}</span>
+        </div>
 
-        <button className="header-profile">
-          <div className="profile-avatar">A</div>
-          <span style={{ fontSize: "13px", fontWeight: 700, color: "#0f0e17" }}>Admin</span>
-        </button>
+        {/* Dream Team AI Badge */}
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20 text-xs font-bold text-purple-300">
+          <Sparkles className="w-3.5 h-3.5 text-pink-400 animate-spin-slow" />
+          <span>Dream Team Active</span>
+        </div>
       </div>
     </header>
   );

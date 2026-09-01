@@ -1,6 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import {
+  Radio,
+  Zap,
+  Activity,
+  Cpu,
+  Volume2,
+  Sparkles,
+  ShieldCheck,
+  RefreshCw,
+} from "lucide-react";
 import { getStatus, startPipeline, stopPipeline } from "@/lib/api";
 
 export default function PipelineTab() {
@@ -10,7 +21,7 @@ export default function PipelineTab() {
 
   useEffect(() => {
     getStatus()
-      .then((d: any) => setIsActive(!!d.pipeline_active))
+      .then((d: any) => setIsActive(!!(d.pipeline?.running || d.pipeline_active)))
       .catch(() => {})
       .finally(() => setFetching(false));
   }, []);
@@ -21,59 +32,107 @@ export default function PipelineTab() {
       if (isActive) await stopPipeline();
       else await startPipeline();
       setIsActive(!isActive);
-    } catch (e) { console.error(e); }
-    setIsLoading(false);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
-    <div>
-      <div className="section-header">
-        <h2 className="section-title">Auto-Mode</h2>
-        <p className="section-sub">Autonomous extraction and clip generation engine</p>
+    <div className="space-y-8 pb-12">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-white tracking-tight">Autonomous Live Engine</h2>
+          <p className="text-xs text-slate-400">
+            24/7 stream capture, real-time Whisper detection, and automated viral clipping
+          </p>
+        </div>
       </div>
 
-      <div className="card" style={{ padding: "60px 40px", textAlign: "center", maxWidth: "560px", margin: "0 auto" }}>
-        {/* Status indicator */}
-        <div style={{
-          width: "100px",
-          height: "100px",
-          borderRadius: "50%",
-          background: isActive ? "linear-gradient(135deg, #6d4aff, #a855f7)" : "#f1f2f7",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          margin: "0 auto 32px",
-          boxShadow: isActive ? "0 0 0 16px rgba(109,74,255,0.08), 0 12px 30px rgba(109,74,255,0.25)" : "none",
-          transition: "all 0.4s ease",
-        }}>
-          <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={isActive ? "white" : "#cbd5e1"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-          </svg>
+      <div className="max-w-2xl mx-auto glass-panel p-10 text-center space-y-8 relative overflow-hidden border-indigo-500/20">
+        <div className="absolute top-0 right-0 -mt-16 -mr-16 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        {/* Dynamic Pulse Orb */}
+        <div className="relative inline-flex items-center justify-center">
+          <motion.div
+            animate={{
+              scale: isActive ? [1, 1.15, 1] : 1,
+              boxShadow: isActive
+                ? [
+                    "0 0 0 0 rgba(99, 102, 241, 0.4)",
+                    "0 0 0 25px rgba(99, 102, 241, 0)",
+                    "0 0 0 0 rgba(99, 102, 241, 0)",
+                  ]
+                : "none",
+            }}
+            transition={{ repeat: Infinity, duration: 2.2, ease: "easeInOut" }}
+            className={`w-28 h-28 rounded-3xl flex items-center justify-center shadow-2xl transition-all ${
+              isActive
+                ? "bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 text-white"
+                : "bg-slate-800/80 text-slate-500 border border-white/5"
+            }`}
+          >
+            <Zap className={`w-12 h-12 ${isActive ? "text-white fill-current" : ""}`} />
+          </motion.div>
         </div>
 
-        <h3 style={{ fontSize: "26px", fontWeight: 900, color: "#0f0e17", marginBottom: "8px" }}>
-          {fetching ? "Checking..." : isActive ? "Pipeline Running" : "Pipeline Stopped"}
-        </h3>
-        <p style={{ fontSize: "14px", color: "#64748b", fontWeight: 600, marginBottom: "40px", lineHeight: 1.6 }}>
-          {isActive
-            ? "The system is actively monitoring streamers and extracting highlight clips."
-            : "Enable auto-mode to start monitoring streamers and generating clips automatically."}
-        </p>
+        <div className="space-y-2">
+          <h3 className="text-3xl font-black text-white">
+            {fetching ? "Inspecting Pipeline..." : isActive ? "Autonomous Engine Active" : "Engine Standby"}
+          </h3>
+          <p className="text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
+            {isActive
+              ? "All enabled streamer streams are being ingested, converted to CFR 60fps, scored via Whisper & RMS excitement, and saved to SQLite."
+              : "Activate auto-mode to continuously monitor streams and generate clips in real-time."}
+          </p>
+        </div>
 
-        <button
-          onClick={handleToggle}
-          disabled={isLoading || fetching}
-          className="btn-primary"
-          style={{
-            width: "100%",
-            height: "56px",
-            fontSize: "16px",
-            background: isActive ? "#1e1b4b" : undefined,
-            boxShadow: isActive ? "none" : undefined,
-          }}
-        >
-          {isLoading ? "Please wait..." : isActive ? "Stop Pipeline" : "Start Pipeline"}
-        </button>
+        {/* Live Metrics Grid */}
+        <div className="grid grid-cols-3 gap-3 p-4 rounded-2xl bg-black/40 border border-white/5 text-xs">
+          <div>
+            <span className="text-[10px] font-bold text-slate-500 uppercase">Frame Normalization</span>
+            <div className="font-mono font-bold text-indigo-400 mt-0.5">CFR 60fps</div>
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-slate-500 uppercase">VRAM Isolation</span>
+            <div className="font-mono font-bold text-emerald-400 mt-0.5">16GB Bound</div>
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-slate-500 uppercase">Worker Queue</span>
+            <div className="font-mono font-bold text-cyan-400 mt-0.5">SQLite Threaded</div>
+          </div>
+        </div>
+
+        {/* Big Action Button */}
+        <div>
+          <button
+            onClick={handleToggle}
+            disabled={isLoading || fetching}
+            className={`w-full py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-xl transition-all ${
+              isActive
+                ? "bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30"
+                : "btn-primary-neon justify-center text-base"
+            }`}
+          >
+            {isLoading ? (
+              <>
+                <RefreshCw className="w-5 h-5 animate-spin" />
+                <span>Processing...</span>
+              </>
+            ) : isActive ? (
+              <>
+                <Radio className="w-5 h-5" />
+                <span>Halt Live Pipeline</span>
+              </>
+            ) : (
+              <>
+                <Zap className="w-5 h-5 text-pink-300" />
+                <span>Engage Autonomous Pipeline</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

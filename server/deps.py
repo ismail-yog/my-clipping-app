@@ -33,6 +33,8 @@ def get_task_queue() -> TaskQueue:
         db = get_db()
         _task_queue = TaskQueue(db)
         _task_queue.start()
+        # Ensure handlers for vod_process and upload are registered
+        get_pipeline_manager()
     return _task_queue
 
 

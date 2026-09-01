@@ -1,83 +1,183 @@
 "use client";
 
-const TABS = [
-  { id: "dashboard",  label: "Dashboard",       icon: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg> },
-  { id: "generator",  label: "Clip Generator",  icon: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg> },
-  { id: "clips",      label: "Clips",           icon: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg> },
-  { id: "streamers",  label: "Streamers",       icon: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg> },
-  { id: "pipeline",   label: "Auto-Mode",       icon: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg> },
-  { id: "uploads",    label: "Uploads",         icon: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19a3.5 3.5 0 0 0 .5-6.912a5 5 0 1 0-9.398-2.076a3.502 3.502 0 0 0-1.107 6.838"/><path d="M12 12v9"/><path d="m15 18-3 3-3-3"/></svg> },
-  { id: "settings",   label: "Settings",        icon: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg> },
-];
+import React from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  LayoutDashboard,
+  Sparkles,
+  Sliders,
+  Tv,
+  Radio,
+  Film,
+  UploadCloud,
+  Settings,
+  Flame,
+  ChevronLeft,
+  ChevronRight,
+  Zap,
+  Activity,
+  Cpu,
+} from "lucide-react";
 
-type Props = {
+interface SidebarProps {
+  isOpen: boolean;
   activeTab: string;
   onTabChange: (tab: string) => void;
   pendingCount: number;
-  isOpen: boolean;
-};
+  onToggle: () => void;
+}
 
-export default function Sidebar({ activeTab, onTabChange, pendingCount, isOpen }: Props) {
-  if (!isOpen) return null;
+const NAV_ITEMS = [
+  { id: "dashboard", label: "Overview", icon: LayoutDashboard, badge: null },
+  { id: "editor", label: "Studio Editor", icon: Sliders, badge: "PRO" },
+  { id: "generator", label: "Viral Clipper", icon: Sparkles, badge: "AI" },
+  { id: "streamers", label: "Streamers", icon: Tv, badge: null },
+  { id: "pipeline", label: "Live Engine", icon: Radio, badge: "LIVE" },
+  { id: "clips", label: "Clip Vault", icon: Film, badgeKey: "pending" },
+  { id: "uploads", label: "Upload Hub", icon: UploadCloud, badge: null },
+  { id: "settings", label: "Settings", icon: Settings, badge: null },
+];
+
+export default function Sidebar({
+  isOpen,
+  activeTab,
+  onTabChange,
+  pendingCount,
+  onToggle,
+}: SidebarProps) {
   return (
-    <aside className="sidebar">
-      <div className="sidebar-logo">
-        <h1>Stream<br/><span>Clip AI</span></h1>
-        <p>Automation Hub</p>
-      </div>
+    <motion.aside
+      initial={false}
+      animate={{ width: isOpen ? 280 : 80 }}
+      transition={{ type: "spring", stiffness: 350, damping: 30 }}
+      className="fixed top-0 left-0 h-screen z-40 flex flex-col border-r border-white/10 bg-[#0b0e17]/95 backdrop-blur-2xl shadow-2xl"
+    >
+      {/* ── Brand Logo Header ───────────────────────── */}
+      <div className="p-6 flex items-center justify-between border-b border-white/5">
+        <div className="flex items-center gap-3 overflow-hidden">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
+            <Flame className="w-6 h-6 text-white animate-pulse" />
+          </div>
+          {isOpen && (
+            <motion.div
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              className="flex flex-col"
+            >
+              <span className="text-lg font-black tracking-tight text-white flex items-center gap-1">
+                STREAM<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-pink-400">CLIPPER</span>
+              </span>
+              <span className="text-[10px] font-bold text-indigo-400/80 tracking-widest uppercase flex items-center gap-1">
+                <Zap className="w-3 h-3 text-pink-400" /> Viral Engine 2.0
+              </span>
+            </motion.div>
+          )}
+        </div>
 
-      {/* CTA — Clip Generator highlight */}
-      <div style={{ padding: "0 20px 24px" }}>
         <button
-          className="sidebar-new-btn"
-          onClick={() => onTabChange("generator")}
-          style={{
-            background: activeTab === "generator"
-              ? "linear-gradient(135deg, #5b3cc4, #6d4aff)"
-              : "linear-gradient(135deg, #6d4aff, #a78bfa)",
-            opacity: 1
-          }}
+          onClick={onToggle}
+          className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+          title={isOpen ? "Collapse Sidebar" : "Expand Sidebar"}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Paste URL to Generate Clips
+          {isOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </button>
       </div>
 
-      <nav className="sidebar-nav">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => onTabChange(tab.id)}
-            className={`sidebar-nav-item ${activeTab === tab.id ? "active" : ""}`}
-          >
-            <span className="nav-icon">{tab.icon}</span>
-            <span style={{ flex: 1 }}>{tab.label}</span>
-            {tab.id === "clips" && pendingCount > 0 && (
-              <span style={{
-                background: "#ef4444",
-                color: "white",
-                fontSize: "10px",
-                fontWeight: 800,
-                padding: "2px 7px",
-                borderRadius: "100px",
-                lineHeight: 1.5,
-              }}>
-                {pendingCount}
-              </span>
-            )}
-          </button>
-        ))}
+      {/* ── Quick Action Hero Button ────────────────── */}
+      <div className="px-4 pt-6 pb-2">
+        <button
+          onClick={() => onTabChange("generator")}
+          className="w-full relative group overflow-hidden rounded-xl p-[1px] font-bold text-sm shadow-xl shadow-indigo-500/20"
+        >
+          <span className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-xl animate-gradient" />
+          <div className="relative px-4 py-3 bg-[#0f1320] rounded-[11px] flex items-center justify-center gap-2 text-white group-hover:bg-transparent transition-all duration-300">
+            <Sparkles className="w-4 h-4 text-pink-400 group-hover:rotate-12 transition-transform" />
+            {isOpen && <span>Generate Viral Clips</span>}
+          </div>
+        </button>
+      </div>
+
+      {/* ── Navigation Items ───────────────────────── */}
+      <nav className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto">
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          const badgeVal = item.badgeKey === "pending" ? (pendingCount > 0 ? pendingCount : null) : item.badge;
+
+          return (
+            <button
+              key={item.id}
+              onClick={() => onTabChange(item.id)}
+              className={`w-full relative flex items-center gap-3.5 px-3.5 py-3 rounded-xl font-semibold text-sm transition-all duration-200 ${
+                isActive
+                  ? "text-white shadow-lg shadow-indigo-500/10"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+              }`}
+            >
+              {isActive && (
+                <motion.div
+                  layoutId="activeTabPill"
+                  className="absolute inset-0 bg-gradient-to-r from-indigo-600/30 to-purple-600/20 border border-indigo-500/40 rounded-xl"
+                  transition={{ type: "spring", stiffness: 400, damping: 35 }}
+                />
+              )}
+
+              <Icon
+                className={`w-5 h-5 flex-shrink-0 relative z-10 transition-transform ${
+                  isActive ? "text-indigo-400 scale-110" : "text-slate-400"
+                }`}
+              />
+
+              {isOpen && (
+                <span className="relative z-10 flex-1 text-left whitespace-nowrap">
+                  {item.label}
+                </span>
+              )}
+
+              {isOpen && badgeVal && (
+                <span
+                  className={`relative z-10 text-[11px] font-extrabold px-2 py-0.5 rounded-full ${
+                    item.badge === "LIVE"
+                      ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse"
+                      : item.badge === "AI"
+                      ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                      : "bg-pink-500/20 text-pink-300 border border-pink-500/30 font-mono"
+                  }`}
+                >
+                  {badgeVal}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </nav>
 
-      <div className="sidebar-footer">
-        <div className="sidebar-user">
-          <div className="sidebar-avatar">A</div>
-          <div>
-            <div style={{ fontSize: "13px", fontWeight: 800, color: "#0f0e17" }}>Admin</div>
-            <div style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", marginTop: "2px" }}>Dashboard Root</div>
+      {/* ── Hardware / System Monitor Footer ───────── */}
+      {isOpen && (
+        <div className="p-4 m-3 rounded-2xl bg-white/[0.03] border border-white/5 space-y-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-400 font-medium flex items-center gap-1.5">
+              <Cpu className="w-3.5 h-3.5 text-cyan-400" /> VRAM Boundary
+            </span>
+            <span className="font-mono text-cyan-400 font-bold">16 GB</span>
+          </div>
+          <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+            <motion.div
+              initial={{ width: "35%" }}
+              animate={{ width: ["35%", "52%", "40%"] }}
+              transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
+              className="h-full bg-gradient-to-r from-cyan-400 to-indigo-500 rounded-full"
+            />
+          </div>
+          <div className="flex items-center justify-between text-[11px] text-slate-500">
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> CFR 60fps
+            </span>
+            <span>TaskQueue: Active</span>
           </div>
         </div>
-      </div>
-    </aside>
+      )}
+    </motion.aside>
   );
 }

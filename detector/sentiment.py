@@ -1,6 +1,7 @@
 """
 StreamClipper — Sentiment Detector
 Transcribes audio with faster-whisper and detects emotional content using sentiment analysis.
+Includes explicit VRAM offload methods to prevent device memory exhaustion.
 """
 
 import time
@@ -11,10 +12,10 @@ from dataclasses import dataclass
 from typing import Optional, List
 
 import config
+from processor.subprocess_utils import free_vram
 
 logger = logging.getLogger("streamclipper.detector.sentiment")
 
-# Map sentiment labels to emotions
 EMOTION_MAP = {
     "joy": "joy",
     "anger": "anger",
@@ -23,7 +24,7 @@ EMOTION_MAP = {
     "fear": "fear",
     "neutral": "neutral",
     "love": "joy",
-    "disgust": "anger"
+    "disgust": "anger",
 }
 
 
@@ -70,12 +71,14 @@ class SentimentDetector:
         """Lazy load Whisper model to save memory and startup time."""
         if self._whisper_model is None:
             from faster_whisper import WhisperModel
-            logger.info("Loading Whisper model: %s on device: %s (%s)...", 
-                        config.WHISPER_MODEL, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
+            logger.info(
+                "Loading Whisper model: %s on device: %s (%s)...",
+                config.WHISPER_MODEL, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE,
+            )
             self._whisper_model = WhisperModel(
                 config.WHISPER_MODEL,
                 device=config.WHISPER_DEVICE,
-                compute_type=config.WHISPER_COMPUTE_TYPE
+                compute_type=config.WHISPER_COMPUTE_TYPE,
             )
             logger.info("Whisper model loaded successfully.")
         return self._whisper_model
@@ -88,10 +91,22 @@ class SentimentDetector:
             self._sentiment_pipeline = pipeline(
                 "sentiment-analysis",
                 model="j-hartmann/emotion-english-distilroberta-base",
-                device=-1  # Force CPU to match target speed constraints
+                device=-1,  # Force CPU to match target speed constraints
             )
             logger.info("Sentiment pipeline loaded successfully.")
         return self._sentiment_pipeline
+
+    def unload_models(self):
+        """Explicitly evicts loaded models from host and device memory."""
+        with self._lock:
+            if self._whisper_model is not None:
+                del self._whisper_model
+                self._whisper_model = None
+            if self._sentiment_pipeline is not None:
+                del self._sentiment_pipeline
+                self._sentiment_pipeline = None
+            free_vram()
+            logger.info("Sentiment and Whisper models unloaded from memory.")
 
     def transcribe(self, audio_path: Path) -> List[TranscriptSegment]:
         """Transcribe an audio file using faster-whisper with word-level timestamps."""
@@ -101,9 +116,9 @@ class SentimentDetector:
                 str(audio_path),
                 word_timestamps=True,
                 language="en",
-                vad_filter=True
+                vad_filter=True,
             )
-            
+
             segments = []
             for seg in segments_iter:
                 words = []
@@ -113,7 +128,7 @@ class SentimentDetector:
                             word=w.word.strip(),
                             start=w.start,
                             end=w.end,
-                            probability=w.probability
+                            probability=w.probability,
                         )
                         for w in seg.words
                     ]
@@ -122,7 +137,7 @@ class SentimentDetector:
                         start=seg.start,
                         end=seg.end,
                         text=seg.text.strip(),
-                        words=words
+                        words=words,
                     )
                 )
             return segments
@@ -149,7 +164,6 @@ class SentimentDetector:
             try:
                 results = pipeline_model(text[:512])
                 if results:
-                    # Handle both nested list and list format
                     top_pred = results[0][0] if isinstance(results[0], list) else results[0]
                     raw_label = top_pred.get("label", "neutral")
                     confidence = top_pred.get("score", 0.0)
@@ -168,7 +182,7 @@ class SentimentDetector:
                     timestamp=reference_time + seg.start,
                     emotion=emotion,
                     confidence=confidence,
-                    text_snippet=text
+                    text_snippet=text,
                 )
                 events.append(event)
 

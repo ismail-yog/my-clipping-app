@@ -16,6 +16,11 @@ ACTIVE_AGENTS = {
     "debugger": True, "concierge": False,
 }
 
+USE_NVIDIA = bool(os.getenv("NVIDIA_API_KEY", ""))
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
+NVIDIA_FALLBACK_MODEL = os.getenv("NVIDIA_FALLBACK_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
+
 USE_OLLAMA = True
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = "llama3"

@@ -659,6 +659,30 @@ class Database:
                 cursor = conn.execute("SELECT COUNT(*) FROM jobs")
             return cursor.fetchone()[0]
 
+    def cancel_job(self, job_id: int) -> bool:
+        """Cancel a pending, scheduled, or processing job."""
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "UPDATE jobs SET status = 'failed', error = 'Cancelled by user', completed_at = ? WHERE id = ?",
+                (time.time(), job_id),
+            )
+            return cursor.rowcount > 0
+
+    def retry_job(self, job_id: int) -> bool:
+        """Reset a failed job to pending for immediate re-execution."""
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "UPDATE jobs SET status = 'pending', error = '', retries = 0, scheduled_for = NULL WHERE id = ?",
+                (job_id,),
+            )
+            return cursor.rowcount > 0
+
+    def delete_job(self, job_id: int) -> bool:
+        """Delete a job permanently."""
+        with self._conn() as conn:
+            cursor = conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+            return cursor.rowcount > 0
+
     # ── Stats ───────────────────────────────────────────────────────────────
 
     def get_stats(self) -> dict:

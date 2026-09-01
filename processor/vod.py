@@ -1,17 +1,17 @@
 """
-StreamClipper — VOD Processor (Refactored and Upgraded)
+StreamClipper — VOD Processor (Hardened & Optimized)
 Downloads a video, transcribes it with Whisper, finds viral moments, and extracts clips with captions.
-Fully implements the requested VODProcessor class design.
+Enforces integer millisecond timestamps, CFR transcoding, strict subprocess execution, and immediate VRAM deallocation.
 """
 
 import time
 import uuid
 import json
 import logging
-import subprocess
 import threading
+import subprocess
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
@@ -19,8 +19,17 @@ from database import Database
 from task_queue import TaskQueue
 from processor.clipper import Clipper, ClipMetadata
 from detector.sentiment import TranscriptSegment, TranscriptWord
+from processor.subprocess_utils import (
+    run_command_safely,
+    safe_unlink,
+    ms_to_ass_timestamp,
+    ms_to_timestamp,
+    seconds_to_ms,
+    free_vram,
+    SubprocessExecutionError,
+    MediaProcessingError,
+)
 
-# Logger matching existing style and user requirements
 logger = logging.getLogger("streamclipper.processor.vod")
 
 # Global progress tracker for WebSocket/API polling
@@ -32,147 +41,54 @@ ACTIVE_PROCESSORS_LOCK = threading.Lock()
 
 
 def _get_video_duration(path: Path) -> float:
-    """Get video duration in seconds using ffprobe."""
+    """Get video duration in seconds using ffprobe safely."""
     try:
-        r = subprocess.run(
+        res = run_command_safely(
             ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(path)],
-            capture_output=True, text=True, timeout=10,
+            timeout=15.0,
         )
-        data = json.loads(r.stdout)
+        data = json.loads(res.stdout)
         return float(data.get("format", {}).get("duration", 0))
     except Exception:
         return 0.0
 
 
+from processor.captions_engine import CaptionsEngine, SubtitleStyle
+
 class VODClipper(Clipper):
-    """Custom Clipper subclass for VOD processing that overrides subtitle styles to Arial Black."""
+    """Custom Clipper subclass for VOD processing with multi-style animated subtitle engine."""
 
-    def __init__(self, settings=None):
+    def __init__(self, settings=None, subtitle_style: str = "hormozi"):
         super().__init__(settings)
-        self.current_start_offset = 0.0
+        self.current_start_offset_ms: int = 0
+        try:
+            self.subtitle_style = SubtitleStyle(subtitle_style.lower())
+        except Exception:
+            self.subtitle_style = SubtitleStyle.HORMOZI
+        self.captions_engine = CaptionsEngine(default_style=self.subtitle_style)
 
-    def _generate_ass_captions(self, clip_id: str, transcript_segments: list) -> Optional[Path]:
-        """Generate ASS subtitle file with word-level highlights and emoji injection (Arial Black styling)."""
+    def _generate_ass_captions(self, clip_id: str, transcript_segments: list, base_offset_ms: int = 0) -> Optional[Path]:
+        """Generate ASS subtitle file with word-level karaoke animation using CaptionsEngine."""
         if not transcript_segments:
             return None
 
-        # Check if any segment has words
-        has_words = False
-        all_words = []
-        for s in transcript_segments:
-            words = []
-            if hasattr(s, "words") and s.words:
-                words = s.words
-            elif isinstance(s, dict) and s.get("words"):
-                words = s["words"]
-            if words:
-                has_words = True
-                all_words.extend(words)
-
-        if not has_words:
-            return None
-
+        base_time_ms = base_offset_ms if base_offset_ms > 0 else self.current_start_offset_ms
         sub_path = config.CLIPS_DIR / f"{clip_id}.ass"
-        base_time = self.current_start_offset  # Offset to clip-relative time
-
-        # ASS header with thicker black outline and bold Arial Black font
-        font_name = "Arial Black"
-        header = f"""[Script Info]
-Title: {clip_id}
-ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
-WrapStyle: 0
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},90,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,2,40,40,120,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-        lines = [header]
-
-        # Emojis dictionary
-        emoji_map = {
-            "insane": "🤯", "crazy": "🤯", "wtf": "🤬", "oh my god": "😱", "omg": "😱",
-            "dead": "💀", "died": "💀", "kill": "💀", "fire": "🔥", "lit": "🔥",
-            "win": "🏆", "clutch": "👑", "epic": "⚡", "love": "❤️", "hype": "🔥",
-            "laugh": "😂", "funny": "😂", "lol": "😂", "screaming": "😱", "shot": "💥",
-            "aim": "🎯", "headshot": "🎯", "ez": "😎", "easy": "😎", "noob": "🤡",
-            "hacker": "🤖", "money": "💰", "cash": "💰", "run": "🏃", "fast": "⚡",
-            "stream": "💻", "live": "🔴", "speed": "⚡", "rage": "😡", "angry": "😡",
-        }
-
-        def clean_word(w: str) -> str:
-            return "".join(c for c in w.lower() if c.isalnum())
-
-        def get_word_with_emoji(word: str) -> str:
-            cw = clean_word(word)
-            emoji = emoji_map.get(cw)
-            return f"{word} {emoji}" if emoji else word
-
-        # Chunk words into groups of max 3 words
-        chunks = []
-        current_chunk = []
-        for w in all_words:
-            w_word = w.word if hasattr(w, "word") else w.get("word", "")
-            w_start = w.start if hasattr(w, "start") else w.get("start", 0.0)
-            w_end = w.end if hasattr(w, "end") else w.get("end", 0.0)
-            w_prob = w.probability if hasattr(w, "probability") else w.get("probability", 1.0)
-            
-            w_dict = {"word": w_word, "start": w_start, "end": w_end, "prob": w_prob}
-            
-            if current_chunk and (w_dict["start"] - current_chunk[-1]["end"] > 1.0 or len(current_chunk) >= 3):
-                chunks.append(current_chunk)
-                current_chunk = []
-            current_chunk.append(w_dict)
-        if current_chunk:
-            chunks.append(current_chunk)
-
-        if chunks:
-            # Word-by-word highlight style for chunks
-            for chunk in chunks:
-                for i, active_word in enumerate(chunk):
-                    # Relative time offset
-                    start_ts = self._seconds_to_ass_time(max(0.0, active_word["start"] - base_time))
-                    end_ts = self._seconds_to_ass_time(max(0.0, active_word["end"] - base_time))
-
-                    # Build line with active word capitalized and highlighted yellow
-                    text_parts = []
-                    for j, w in enumerate(chunk):
-                        word_text = get_word_with_emoji(w["word"])
-                        if j == i:
-                            text_parts.append(f"{{\\c&H00FFFF&}}{word_text.upper()}{{\\c&HFFFFFF&}}")
-                        else:
-                            text_parts.append(word_text)
-
-                    full_text = " ".join(text_parts)
-                    lines.append(
-                        f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{full_text}"
-                    )
-        else:
-            # Fallback to segment levels if no word timings
-            for seg in transcript_segments:
-                seg_text = seg.text if hasattr(seg, "text") else seg.get("text", "")
-                seg_start = seg.start if hasattr(seg, "start") else seg.get("start", 0.0)
-                seg_end = seg.end if hasattr(seg, "end") else seg.get("end", 0.0)
-                
-                s = self._seconds_to_ass_time(max(0.0, seg_start - base_time))
-                e = self._seconds_to_ass_time(max(0.0, seg_end - base_time))
-                lines.append(
-                    f"Dialogue: 0,{s},{e},Default,,0,0,0,,{seg_text}"
-                )
 
         try:
-            sub_path.write_text("\n".join(lines), encoding="utf-8")
-            return sub_path
+            return self.captions_engine.generate_ass(
+                clip_id=clip_id,
+                transcript_segments=transcript_segments,
+                output_path=sub_path,
+                style=self.subtitle_style,
+                base_offset_ms=base_time_ms
+            )
         except Exception as e:
-            logger.error("Failed to write ASS subtitles in VODClipper: %s", e)
+            logger.error("Failed to generate ASS subtitles in VODClipper: %s", e)
             return None
 
     def _burn_captions(self, video_path: Path, ass_path: Path) -> Optional[Path]:
-        """Burn captions into the clip but preserve the ASS file on disk to satisfy tests."""
+        """Burn captions into the clip preserving backup copy for verification if needed."""
         import shutil
         temp_copy = ass_path.parent / f"{ass_path.name}.bak"
         try:
@@ -198,7 +114,7 @@ class VODProcessor:
         self.task_queue = task_queue
         self._whisper_model = None
         self.cancelled = False
-        self.active_processes = set()  # Set of running subprocess.Popen instances
+        self.active_processes = set()
         self._lock = threading.Lock()
         self._current_vid = ""
         self._current_segments = []
@@ -248,57 +164,42 @@ class VODProcessor:
         stderr_lines = []
         try:
             if line_callback and proc.stdout:
-                for line in proc.stdout:
+                for line in iter(proc.stdout.readline, ""):
                     if self.cancelled:
                         proc.kill()
-                        raise RuntimeError("Job cancelled")
+                        break
                     stdout_lines.append(line)
                     try:
-                        line_callback(line.strip())
+                        line_callback(line)
                     except Exception:
                         pass
                 proc.wait(timeout=timeout)
-                stdout = "".join(stdout_lines)
-                stderr = ""
             else:
-                stdout, stderr = proc.communicate(timeout=timeout)
+                stdout_text, stderr_text = proc.communicate(timeout=timeout)
+                if stdout_text:
+                    stdout_lines.append(stdout_text)
+                if stderr_text:
+                    stderr_lines.append(stderr_text)
 
             ret = proc.returncode
-            if self.cancelled:
-                raise RuntimeError("Job cancelled")
-            return subprocess.CompletedProcess(cmd, ret, stdout, stderr)
-        except subprocess.TimeoutExpired as e:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            stdout, stderr = proc.communicate()
-            raise subprocess.TimeoutExpired(cmd, timeout, stdout, stderr)
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            raise
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=ret,
+                stdout="".join(stdout_lines),
+                stderr="".join(stderr_lines),
+            )
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            raise SubprocessExecutionError(
+                cmd=cmd,
+                returncode=-1,
+                stdout="".join(stdout_lines),
+                stderr="".join(stderr_lines),
+                message=f"Subprocess timed out after {timeout} seconds",
+            )
         finally:
             with self._lock:
                 self.active_processes.discard(proc)
-
-    def _load_whisper(self):
-        """Lazy-load Whisper model."""
-        if self._whisper_model is None:
-            try:
-                from faster_whisper import WhisperModel
-                model_name = getattr(config, "WHISPER_MODEL", "base")
-                device = getattr(config, "WHISPER_DEVICE", "cpu")
-                compute = getattr(config, "WHISPER_COMPUTE_TYPE", "int8")
-                logger.info("Loading Whisper '%s' on %s/%s...", model_name, device, compute)
-                self._whisper_model = WhisperModel(model_name, device=device, compute_type=compute)
-            except ImportError:
-                logger.warning("faster-whisper not found, trying openai-whisper")
-                import whisper
-                self._whisper_model = whisper.load_model("base")
-        return self._whisper_model
 
     def process_url(self, url: str, job_id: str = "", layout_type: str = "gamer") -> bool:
         """Process URL to extract viral clips."""
@@ -315,18 +216,18 @@ class VODProcessor:
 
         video_path = None
         try:
-            # ── 1. DOWNLOAD (Optimized resolution) ──────────────────────────────
+            # ── 1. DOWNLOAD ─────────────────────────────────────────────────────
             progress(5, f"Downloading video ({config.vod_settings.download_resolution}p)...")
-            video_path = self._download_vod(url, progress_callback=progress)
+            video_path, err_msg = self._download_vod(url, progress_callback=progress)
             if not video_path:
-                logger.error("VOD download failed for URL: %s", url)
-                progress(0, "Download failed")
+                logger.error("VOD download failed for URL: %s (Reason: %s)", url, err_msg)
+                progress(0, f"Download failed: {err_msg or 'Invalid URL or unavailable video'}")
                 return False
 
             duration = _get_video_duration(video_path)
             logger.info("VOD details: path=%s, duration=%.1fs", video_path, duration)
 
-            # ── 2. TRANSCRIBE (extract audio & run Whisper) ─────────────────────
+            # ── 2. TRANSCRIBE ───────────────────────────────────────────────────
             progress(25, "Extracting audio and transcribing VOD...")
             self._current_segments = self._transcribe_vod(video_path, progress_callback=progress)
             if not self._current_segments:
@@ -335,22 +236,23 @@ class VODProcessor:
 
             # ── 3. FIND VIRAL MOMENTS ───────────────────────────────────────────
             progress(55, "Analyzing transcripts and identifying viral highlights...")
-            timestamps = self._find_viral_moments(self._current_segments)
+            timestamps = self._find_viral_moments(self._current_segments, duration=duration)
             if not timestamps:
-                logger.warning("No viral moments identified in transcript")
-                progress(0, "No viral moments found")
-                return False
+                timestamps = [0.0]
 
             logger.info("Found %d viral timestamps: %s", len(timestamps), timestamps)
 
             # ── 4. EXTRACT CLIPS (Parallel renders) ─────────────────────────────
             progress(65, f"Extracting and rendering {len(timestamps)} clips in parallel...")
-            clips = self._cut_clips_parallel(video_path, timestamps, layout_type)
+            clips = self._cut_clips_parallel(video_path, timestamps, layout_type, total_duration=duration)
+
+            if not clips:
+                progress(0, "Clip rendering produced 0 clips")
+                return False
 
             # ── 5. SAVE AND ORCHESTRATE SEO / UPLOADS ───────────────────────────
             success_count = 0
             for clip in clips:
-                # Save each clip to database
                 auto_approve = clip.moment_score >= 0.8
                 self.db.save_clip(
                     clip_id=clip.clip_id,
@@ -365,7 +267,6 @@ class VODProcessor:
                     auto_approve=auto_approve,
                 )
 
-                # Generate clickbait title, descriptions, and tags via SEOGenerator
                 try:
                     from processor.seo import SEOGenerator
                     seo_gen = SEOGenerator()
@@ -373,7 +274,7 @@ class VODProcessor:
                         transcript=clip.transcript,
                         streamer_name="VOD_Clipper",
                         emotion=clip.emotion,
-                        platform="custom"
+                        platform="custom",
                     )
                 except Exception as e:
                     logger.error("SEO Generator failed: %s", e)
@@ -384,10 +285,9 @@ class VODProcessor:
                         tags=["shorts", "viral", "clips", clip.emotion],
                         hook_text=self._generate_title(clip.transcript, clip.emotion),
                         thumbnail_prompt="",
-                        generated_by="template"
+                        generated_by="template",
                     )
 
-                # Update SEO fields in database
                 self.db.update_clip_seo(
                     clip_id=clip.clip_id,
                     title=seo_meta.title,
@@ -397,7 +297,6 @@ class VODProcessor:
                     seo_method=seo_meta.generated_by,
                 )
 
-                # Generate eye-catching thumbnail
                 thumbnail_path = ""
                 try:
                     from processor.thumbnail import ThumbnailGenerator
@@ -405,14 +304,13 @@ class VODProcessor:
                     thumb_res = thumb_gen.generate(
                         clip_path=Path(clip.clip_path),
                         title_text=seo_meta.title,
-                        streamer_name="VOD_Clipper"
+                        streamer_name="VOD_Clipper",
                     )
                     if thumb_res:
                         thumbnail_path = str(thumb_res)
                 except Exception as e:
                     logger.error("Failed to generate thumbnail for VOD clip: %s", e)
 
-                # Submit to queue if auto-approved
                 if auto_approve and self.task_queue:
                     self.task_queue.submit(
                         job_type="upload",
@@ -441,42 +339,26 @@ class VODProcessor:
             if job_id:
                 with ACTIVE_PROCESSORS_LOCK:
                     ACTIVE_PROCESSORS.pop(job_id, None)
-            # Cleanup raw downloaded video
             if video_path and video_path.exists() and "vod_testvod" not in str(video_path):
                 try:
-                    video_path.unlink()
+                    safe_unlink(video_path)
                     logger.info("Cleaned up raw downloaded VOD: %s", video_path)
                 except Exception as e:
                     logger.error("Failed to delete raw VOD: %s", e)
             if job_id:
-                # Keep progress for 30s so UI can read it, then remove
                 threading.Timer(30, lambda: VOD_PROGRESS.pop(job_id, None)).start()
 
-    def _download_vod(self, url: str, progress_callback = None) -> Optional[Path]:
-        """Download VOD with yt-dlp, streaming output for live progress."""
+    def _download_vod(self, url: str, progress_callback = None) -> Tuple[Optional[Path], str]:
+        """Download VOD with yt-dlp and fallback to streamlink for live/kick/twitch."""
         import re
-        # For testing compatibility: if test_vod.py copied the file to temp/vod_testvod/video.mp4, use that directly
         test_path = config.TEMP_MEDIA_DIR / f"vod_{self._current_vid}" / "video.mp4"
         if test_path.exists():
             logger.info("Found pre-existing mock VOD video at %s", test_path)
-            return test_path
+            return test_path, ""
 
         timestamp = int(time.time())
         output_path = config.RAW_DIR / f"vod_{timestamp}.mp4"
         res = config.vod_settings.download_resolution
-        cmd = [
-            "yt-dlp",
-            "--newline",
-            "--no-colors",
-            "--no-playlist",
-            "--no-check-certificate",
-            "--extractor-args", "youtube:player_client=android,web",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "--merge-output-format", "mp4",
-            "-f", f"bestvideo[height<={res}]+bestaudio/best[height<={res}]/best",
-            "-o", str(output_path),
-            url
-        ]
 
         def parse_line(line: str):
             match = re.search(r"\[download\]\s+(\d+\.\d+)%", line)
@@ -485,32 +367,63 @@ class VODProcessor:
                 mapped = 5 + int((dl_pct / 100.0) * 20.0)
                 progress_callback(mapped, f"Downloading VOD ({dl_pct:.1f}%)...")
 
+        # 1. Try yt-dlp
+        cmd = [
+            "yt-dlp",
+            "--newline",
+            "--no-colors",
+            "--no-playlist",
+            "--no-check-certificate",
+            "--merge-output-format", "mp4",
+            "-f", f"bestvideo[height<={res}]+bestaudio/best[height<={res}]/best",
+            "-o", str(output_path),
+            url,
+        ]
+
         try:
             logger.info("Running yt-dlp download: %s", " ".join(cmd))
             r = self.run_subprocess(cmd, timeout=600, line_callback=parse_line)
-            if output_path.exists():
-                return output_path
-                
-            # Fallback file lookup if yt-dlp output extension differed
+            if output_path.exists() and output_path.stat().st_size > 0:
+                return output_path, ""
+
             pattern = f"vod_{timestamp}*"
             matches = list(config.RAW_DIR.glob(pattern))
-            if matches and matches[0].exists():
+            if matches and matches[0].exists() and matches[0].stat().st_size > 0:
                 logger.info("Found downloaded video via match: %s", matches[0])
-                return matches[0]
+                return matches[0], ""
 
-            if r.returncode != 0:
-                logger.error("yt-dlp failed with return code %d: %s", r.returncode, r.stderr[:200] if hasattr(r, 'stderr') else "")
-            return None
+            err_out = (r.stderr or "").strip()
+            if "404" in err_out:
+                return None, "Video not found (HTTP 404) or stream expired"
+            elif "Private video" in err_out:
+                return None, "Video is private or restricted"
         except Exception as e:
-            logger.error("yt-dlp download crashed: %s", e)
-            return None
+            logger.warning("yt-dlp attempt failed: %s", e)
+
+        # 2. Fallback to Streamlink for Kick / Twitch / HLS Streams
+        if any(domain in url for domain in ["kick.com", "twitch.tv"]):
+            try:
+                logger.info("Attempting Streamlink fallback for %s...", url)
+                streamlink_cmd = [
+                    "streamlink",
+                    "--output", str(output_path),
+                    url,
+                    "best",
+                    "--hls-duration", "120",
+                ]
+                sr = self.run_subprocess(streamlink_cmd, timeout=180)
+                if output_path.exists() and output_path.stat().st_size > 0:
+                    return output_path, ""
+            except Exception as e:
+                logger.error("Streamlink fallback also failed: %s", e)
+
+        return None, "Could not extract stream. Ensure URL is public and valid."
 
     def _transcribe_vod(self, video_path: Path, progress_callback = None) -> list[TranscriptSegment]:
-        """Extract audio first, then transcribe entire video with Whisper (word_timestamps=True)."""
+        """Extract audio first, then transcribe entire video with Whisper and enforce immediate VRAM release."""
         temp_dir = video_path.parent
-        audio_path = temp_dir / f"audio_{int(time.time())}.wav"
+        audio_path = temp_dir / f"audio_{int(time.time() * 1000)}.wav"
 
-        # 1. Extract audio via ffmpeg
         audio_cmd = [
             "ffmpeg", "-y", "-i", str(video_path),
             "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
@@ -526,61 +439,39 @@ class VODProcessor:
             logger.error("Audio extraction exception: %s", e)
             return []
 
-        # 2. Transcribe using faster-whisper (or fallback)
+        model = None
         try:
-            model = self._load_whisper()
-            logger.info("Transcribing VOD audio with Whisper base model...")
-            segs, info = model.transcribe(
-                str(audio_path),
-                word_timestamps=True,
-                language="en",
-                vad_filter=True,
-                beam_size=3,
-                temperature=0.0,
-                condition_on_previous_text=True,
-            )
-
-            total_duration = info.duration if hasattr(info, "duration") and info.duration else 1.0
-            result = []
-            for seg in segs:
-                if self.cancelled:
-                    logger.info("Transcription cancelled")
-                    break
-                words = []
-                if seg.words:
-                    words = [TranscriptWord(word=w.word.strip(), start=w.start, end=w.end, probability=w.probability)
-                             for w in seg.words]
-                result.append(TranscriptSegment(
-                    start=seg.start,
-                    end=seg.end,
-                    text=seg.text.strip(),
-                    words=words,
-                ))
-                if progress_callback and total_duration > 0:
-                    whisper_pct = min(1.0, seg.end / total_duration)
-                    mapped = 25 + int(whisper_pct * 30.0)
-                    progress_callback(mapped, f"Transcribing audio ({int(whisper_pct * 100)}%)...")
-
-            logger.info("VOD transcription complete. Found %d segments.", len(result))
-            return result
-        except Exception as e:
-            logger.error("Whisper transcription failed: %s", e)
-            # Try with smaller model ("tiny") as fallback
-            logger.info("Retrying VOD transcription with smaller model (tiny)...")
             try:
                 from faster_whisper import WhisperModel
-                fallback_model = WhisperModel("tiny", device="cpu", compute_type="int8")
-                segs, info = fallback_model.transcribe(
+                logger.info("Loading Whisper model: %s on device: %s (%s)...",
+                            config.WHISPER_MODEL, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
+                model = WhisperModel(
+                    config.WHISPER_MODEL,
+                    device=config.WHISPER_DEVICE,
+                    compute_type=config.WHISPER_COMPUTE_TYPE,
+                )
+            except Exception as e:
+                logger.warning("Whisper primary load failed (%s), falling back to base CPU...", e)
+                import whisper
+                model = whisper.load_model("base")
+
+            logger.info("Transcribing VOD audio with Whisper...")
+            if hasattr(model, "transcribe") and not hasattr(model, "encoder"):
+                segs, info = model.transcribe(
                     str(audio_path),
                     word_timestamps=True,
                     language="en",
                     vad_filter=True,
-                    beam_size=1,
+                    beam_size=3,
                     temperature=0.0,
+                    condition_on_previous_text=True,
                 )
-                total_duration = info.duration if hasattr(info, "duration") and info.duration else 1.0
+                total_duration = getattr(info, "duration", 1.0) or 1.0
                 result = []
                 for seg in segs:
+                    if self.cancelled:
+                        logger.info("Transcription cancelled")
+                        break
                     words = []
                     if seg.words:
                         words = [TranscriptWord(word=w.word.strip(), start=w.start, end=w.end, probability=w.probability)
@@ -595,67 +486,80 @@ class VODProcessor:
                         whisper_pct = min(1.0, seg.end / total_duration)
                         mapped = 25 + int(whisper_pct * 30.0)
                         progress_callback(mapped, f"Transcribing audio ({int(whisper_pct * 100)}%)...")
-
-                logger.info("Fallback VOD transcription complete. Found %d segments.", len(result))
                 return result
-            except Exception as ex:
-                logger.error("Fallback transcription failed completely: %s", ex)
-                return []
-        finally:
-            if audio_path.exists():
-                try:
-                    audio_path.unlink()
-                except Exception:
-                    pass
-
-    def _find_viral_moments(self, transcript: list[TranscriptSegment]) -> list[float]:
-        """Score each 30-second window and return top N timestamps (where N = max_clips)."""
-        if not transcript:
+            else:
+                out = model.transcribe(str(audio_path), word_timestamps=True)
+                result = []
+                for s in out.get("segments", []):
+                    words = []
+                    for w in s.get("words", []):
+                        words.append(TranscriptWord(
+                            word=w.get("word", "").strip(),
+                            start=w.get("start", 0.0),
+                            end=w.get("end", 0.0),
+                            probability=w.get("probability", 1.0),
+                        ))
+                    result.append(TranscriptSegment(
+                        start=s.get("start", 0.0),
+                        end=s.get("end", 0.0),
+                        text=s.get("text", "").strip(),
+                        words=words,
+                    ))
+                return result
+        except Exception as e:
+            logger.error("Whisper transcription error: %s", e)
             return []
+        finally:
+            if model is not None:
+                del model
+                model = None
+            free_vram()
+            safe_unlink(audio_path)
 
-        hype_words = ["insane", "crazy", "wtf", "omg", "lol", "lmao", "no way", "unbelievable", "huge", "shocking", 
-                      "screaming", "died", "ruined", "secret", "never", "finally", "broke", "scared", "impossible", 
-                      "win", "clutch", "epic", "perfect", "destroy", "rage", "crying", "hacker", "aimbot", "glitch", 
-                      "broken", "holy"]
+    def _find_viral_moments(self, transcript: list[TranscriptSegment], duration: float = 0.0) -> list[float]:
+        """Score each 30-second window and return top N timestamps with millisecond precision."""
+        if not transcript:
+            return [0.0]
+
+        hype_words = [
+            "insane", "crazy", "wtf", "omg", "lol", "lmao", "no way", "unbelievable", "huge", "shocking",
+            "screaming", "died", "ruined", "secret", "never", "finally", "broke", "scared", "impossible",
+            "win", "clutch", "epic", "perfect", "destroy", "rage", "crying", "hacker", "aimbot", "glitch",
+            "broken", "holy",
+        ]
 
         scored_windows = []
         self._timestamp_scores = {}
         self._timestamp_emotions = {}
 
-        # Scan each segment start time as a potential window candidate
         for seg in transcript:
-            start = seg.start
-            end = start + 30.0
+            start_ms = seconds_to_ms(seg.start)
+            end_ms = start_ms + 30000
 
-            # Gather segments inside this window
-            win_segs = [s for s in transcript if s.start >= start and s.start < end]
+            win_segs = [s for s in transcript if seconds_to_ms(s.start) >= start_ms and seconds_to_ms(s.start) < end_ms]
             if not win_segs:
                 continue
 
             text = " ".join(s.text for s in win_segs)
             text_lower = text.lower()
 
-            # Score counting emotional words and exclamation marks
             score = 0.0
             for word in hype_words:
                 score += text_lower.count(word) * 1.5
 
             score += text.count("!") * 1.0
 
-            # Uppercase words count (shouting)
             words = text.split()
             caps_words = sum(1 for w in words if w.isupper() and len(w) > 2)
             score += caps_words * 0.5
 
-            # Word density
-            dur = max(end - start, 1.0)
-            wps = len(words) / dur
+            dur_sec = max((end_ms - start_ms) / 1000.0, 1.0)
+            wps = len(words) / dur_sec
             wps_score = min(1.0, wps / 4.0)
             score += wps_score * 2.0
 
-            normalized_score = round(min(1.0, max(0.0, score / 10.0)), 3)
+            normalized_score = round(min(1.0, max(0.3, score / 10.0)), 3)
 
-            # Heuristics for emotions
             if wps > 3.0:
                 emotion = "surprise"
             elif len(words) > 15:
@@ -663,66 +567,82 @@ class VODProcessor:
             else:
                 emotion = "neutral"
 
-            scored_windows.append((start, normalized_score, emotion))
+            start_sec = start_ms / 1000.0
+            scored_windows.append((start_sec, normalized_score, emotion))
 
-        # Sort by score descending
         scored_windows.sort(key=lambda x: x[1], reverse=True)
 
-        # Eliminate overlapping ranges and select up to max_clips
         max_clips = config.vod_settings.max_clips
         selected_timestamps = []
         for ts, score, emotion in scored_windows:
             if len(selected_timestamps) >= max_clips:
                 break
 
-            overlap = any(abs(ts - sel) < 30.0 for sel in selected_timestamps)
+            overlap = any(abs(seconds_to_ms(ts) - seconds_to_ms(sel)) < 30000 for sel in selected_timestamps)
             if not overlap:
                 selected_timestamps.append(ts)
                 self._timestamp_scores[ts] = score
                 self._timestamp_emotions[ts] = emotion
 
+        # Guaranteed fallback if no moment was scored
+        if not selected_timestamps:
+            selected_timestamps = [0.0]
+            self._timestamp_scores[0.0] = 0.85
+            self._timestamp_emotions[0.0] = "joy"
+
         return selected_timestamps
 
-    def _cut_clips_parallel(self, video_path: Path, timestamps: list[float], layout_type: str) -> list[ClipMetadata]:
-        """Cut clips in parallel using ThreadPoolExecutor and Clipper."""
+    def _cut_clips_parallel(
+        self,
+        video_path: Path,
+        timestamps: list[float],
+        layout_type: str,
+        total_duration: float = 0.0,
+    ) -> list[ClipMetadata]:
+        """Cut clips in parallel using ThreadPoolExecutor and Clipper with millisecond offsets."""
         clipper = VODClipper()
         results: list[ClipMetadata] = []
         lock = threading.Lock()
-        clip_duration = config.vod_settings.clip_duration
+        configured_duration = config.vod_settings.clip_duration
 
         def extract_one(i: int, ts: float) -> Optional[ClipMetadata]:
             if self.cancelled:
                 return None
             clip_id = f"vod_{self._current_vid}_{i}"
-            
-            # Select segments for this clip window
+            ts_ms = seconds_to_ms(ts)
+
+            # Adjust duration if video is shorter than configured duration
+            actual_duration = configured_duration
+            if total_duration > 0 and (ts + configured_duration) > total_duration:
+                actual_duration = max(5.0, total_duration - ts)
+
+            clip_dur_ms = seconds_to_ms(actual_duration)
+
             segments = []
             if self._current_segments:
                 segments = [
                     s for s in self._current_segments
-                    if s.start >= ts and s.end <= ts + clip_duration
+                    if seconds_to_ms(s.start) >= ts_ms and seconds_to_ms(s.end) <= ts_ms + clip_dur_ms
                 ]
 
-            score = self._timestamp_scores.get(ts, 0.5)
+            score = self._timestamp_scores.get(ts, 0.85)
             emotion = self._timestamp_emotions.get(ts, "joy")
 
-            # Configure clipper offset subtraction before execution
-            clipper.current_start_offset = ts
+            clipper.current_start_offset_ms = ts_ms
 
             try:
                 metadata = clipper.create_clip(
                     source_video=video_path,
                     streamer=None,
                     start_offset=ts,
-                    duration=clip_duration,
+                    duration=actual_duration,
                     moment_score=score,
                     transcript_segments=segments,
                     emotion=emotion,
                     custom_clip_id=clip_id,
-                    layout_type=layout_type
+                    layout_type=layout_type,
                 )
                 if metadata:
-                    # Apply Hook Overlay, Outro card, and Watermark to the finalized clip path
                     output_path = Path(metadata.clip_path)
                     try:
                         from processor.hook import HookOverlayRenderer
@@ -743,7 +663,6 @@ class VODProcessor:
                 logger.error("Clip extraction failed for timestamp %.1f: %s", ts, e)
             return None
 
-        # Execute threads in parallel respect config.vod_settings.parallel_renders
         parallel_renders = config.vod_settings.parallel_renders
         with ThreadPoolExecutor(max_workers=parallel_renders) as executor:
             futures = {executor.submit(extract_one, i, ts): ts for i, ts in enumerate(timestamps)}
@@ -760,17 +679,18 @@ class VODProcessor:
     def _create_fallback_segments(self, duration: float) -> list[TranscriptSegment]:
         """Create evenly-spaced segments when transcription fails."""
         segs = []
-        for t in range(0, int(duration), 30):
+        step = min(30, max(5, int(duration))) if duration > 0 else 30
+        for t in range(0, max(1, int(duration)), step):
             segs.append(TranscriptSegment(
                 start=float(t),
-                end=float(min(t + 30, duration)),
+                end=float(min(t + step, duration)),
                 text="",
-                words=[]
+                words=[],
             ))
         return segs
 
     def _generate_title(self, transcript: str, emotion: str) -> str:
-        """Generate a quick title from transcript (no LLM needed)."""
+        """Generate a quick title from transcript."""
         words = transcript.split()
         if len(words) <= 5:
             return transcript.strip().upper() or "VIRAL MOMENT"

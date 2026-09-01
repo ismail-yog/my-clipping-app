@@ -1,6 +1,7 @@
 """
 StreamClipper — Stream Capture
 Records live streams in 1080p using a rolling buffer.
+Forces Constant Frame Rate (CFR) resampling to guarantee perfect audio/video sync.
 """
 
 import os
@@ -10,9 +11,15 @@ import logging
 import threading
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import config
+from processor.subprocess_utils import (
+    run_command_safely,
+    safe_unlink,
+    SubprocessExecutionError,
+    MediaProcessingError,
+)
 
 logger = logging.getLogger("streamclipper.capture")
 
@@ -62,15 +69,16 @@ class StreamCapture:
         # Spawn background capture worker thread
         self._capture_thread = threading.Thread(
             target=self._capture_worker,
-            name="_capture_loop",
-            daemon=True
+            name=f"capture-{self.streamer.name}",
+            daemon=True,
         )
         self._capture_thread.start()
 
         # Spawn background cleanup loop thread
         self._cleanup_thread = threading.Thread(
             target=self._cleanup_loop,
-            daemon=True
+            name=f"cleanup-{self.streamer.name}",
+            daemon=True,
         )
         self._cleanup_thread.start()
 
@@ -192,7 +200,7 @@ class StreamCapture:
                 logger.error("[%s] Exception in capture execution: %s", self.streamer.name, e)
                 time.sleep(2)
 
-    def get_buffer_files(self, last_n_seconds: int = 30) -> list[Path]:
+    def get_buffer_files(self, last_n_seconds: int = 30) -> List[Path]:
         """Return a sorted list of segments covering the last N seconds."""
         if not self._buffer_dir or not self._buffer_dir.exists():
             return []
@@ -207,15 +215,15 @@ class StreamCapture:
     def get_concat_file(self, start_time: float, duration: float) -> Optional[Path]:
         """
         Concatenate buffer segments covering the time window [start_time, start_time + duration].
+        Forces Constant Frame Rate (CFR) 60 FPS resampling to guarantee no audio/video drift.
         Returns the path to the concatenated file, or None on failure.
         """
-        # Fetch segments up to the time duration requested plus extra window to be safe
         segments = self.get_buffer_files(last_n_seconds=int(time.time() - start_time + 10))
         if not segments:
             logger.warning("[%s] No segments available in buffer for concatenation.", self.streamer.name)
             return None
 
-        # Filter segments that match the exact start time and duration bounds (with 10s padding)
+        # Filter segments that match the exact start time and duration bounds
         selected = []
         for seg in segments:
             try:
@@ -235,40 +243,49 @@ class StreamCapture:
                 len(selected),
             )
 
-        # Create text file for ffmpeg concat demuxer
-        concat_list_path = self._buffer_dir / "concat_list.txt"
+        concat_list_path = self._buffer_dir / f"concat_list_{int(time.time() * 1000)}.txt"
+        output_file = config.TEMP_MEDIA_DIR / f"concat_{self.streamer.name}_{int(time.time() * 1000)}.mp4"
+
         try:
             with open(concat_list_path, "w", encoding="utf-8") as f:
                 for seg in selected:
                     escaped_path = str(seg.resolve()).replace("'", "'\\''")
                     f.write(f"file '{escaped_path}'\n")
 
-            output_file = config.TEMP_MEDIA_DIR / f"concat_{self.streamer.name}_{int(time.time())}.mp4"
+            # Force Constant Frame Rate (CFR) resampling at 60fps to prevent A/V drift
             ffmpeg_cmd = [
                 "ffmpeg", "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", str(concat_list_path),
-                "-c", "copy",
+                "-vf", "fps=fps=60",
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-crf", "18",
+                "-c:a", "aac",
+                "-b:a", "192k",
                 "-movflags", "+faststart",
                 str(output_file),
             ]
 
-            result = subprocess.run(
-                ffmpeg_cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode == 0 and output_file.exists():
-                logger.info("[%s] Concatenated %d segments to %s", self.streamer.name, len(selected), output_file.name)
+            run_command_safely(ffmpeg_cmd, timeout=90.0)
+
+            if output_file.exists() and output_file.stat().st_size > 0:
+                logger.info("[%s] Concatenated & normalized %d segments to %s (CFR 60fps)", self.streamer.name, len(selected), output_file.name)
                 return output_file
             else:
-                logger.error("[%s] FFmpeg concat failed: %s", self.streamer.name, result.stderr)
+                logger.error("[%s] FFmpeg concat output file is missing or empty.", self.streamer.name)
+                return None
+        except SubprocessExecutionError as err:
+            logger.error("[%s] FFmpeg concat failed: %s", self.streamer.name, err.stderr)
+            safe_unlink(output_file)
+            return None
         except Exception as e:
             logger.error("[%s] Concatenate error: %s", self.streamer.name, e)
-
-        return None
+            safe_unlink(output_file)
+            return None
+        finally:
+            safe_unlink(concat_list_path)
 
     def extract_audio(self, video_path: Path) -> Optional[Path]:
         """Extract audio to a 16kHz mono WAV file (required for Whisper)."""
@@ -283,35 +300,30 @@ class StreamCapture:
             str(audio_path),
         ]
         try:
-            result = subprocess.run(
-                ffmpeg_cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode == 0 and audio_path.exists():
+            run_command_safely(ffmpeg_cmd, timeout=60.0)
+            if audio_path.exists() and audio_path.stat().st_size > 0:
                 return audio_path
-            else:
-                logger.error("[%s] Audio extraction failed: %s", self.streamer.name, result.stderr)
+            logger.error("[%s] Extracted audio file is missing or empty: %s", self.streamer.name, audio_path)
+            return None
+        except SubprocessExecutionError as err:
+            logger.error("[%s] Audio extraction failed: %s", self.streamer.name, err.stderr)
+            safe_unlink(audio_path)
+            return None
         except Exception as e:
             logger.error("[%s] Exception during audio extraction: %s", self.streamer.name, e)
-        return None
+            safe_unlink(audio_path)
+            return None
 
     def _get_stream_url(self) -> Optional[str]:
         """Query streamlink to resolve the live stream HLS manifest URL."""
         cmd = ["streamlink", "--get-url", self.streamer.url, self.settings.stream_quality]
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if result.returncode == 0:
-                url = result.stdout.strip()
+            res = run_command_safely(cmd, timeout=20.0, check=False)
+            if res.returncode == 0:
+                url = res.stdout.strip()
                 if url.startswith("http"):
                     return url
-            logger.debug("[%s] Streamlink get-url stderr: %s", self.streamer.name, result.stderr)
+            logger.debug("[%s] Streamlink get-url stderr: %s", self.streamer.name, res.stderr)
         except Exception as e:
             logger.error("[%s] Exception querying streamlink: %s", self.streamer.name, e)
         return None
@@ -346,8 +358,8 @@ class StreamCapture:
         for filepath in self._buffer_dir.glob("seg_*.ts"):
             try:
                 if filepath.stat().st_mtime < cutoff:
-                    filepath.unlink(missing_ok=True)
-                    removed_count += 1
+                    if safe_unlink(filepath):
+                        removed_count += 1
             except Exception:
                 pass
 

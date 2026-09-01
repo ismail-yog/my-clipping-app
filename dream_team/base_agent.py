@@ -70,6 +70,12 @@ class BaseAgent:
         """
         self.logger.info("think() called – prompt length %d chars", len(prompt))
 
+        # 0. NVIDIA NIM (Nemotron 3 Ultra / Nemotron 3.5)
+        if getattr(config, "USE_NVIDIA", False) and getattr(config, "NVIDIA_API_KEY", ""):
+            result = self._call_nvidia_nim(prompt, temperature, max_tokens)
+            if result is not None:
+                return result
+
         # 1. Ollama
         if config.USE_OLLAMA:
             result = self._call_ollama(prompt, temperature, max_tokens)
@@ -90,6 +96,50 @@ class BaseAgent:
 
         self.logger.error("All LLM providers failed for prompt.")
         return ""
+
+    # ── NVIDIA NIM ───────────────────────────────────────────────────
+
+    def _call_nvidia_nim(self, prompt: str, temperature: float, max_tokens: int) -> Optional[str]:
+        """Call NVIDIA NIM / AI Foundation Cloud Endpoint."""
+        url = "https://integrate.api.nvidia.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {config.NVIDIA_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        models_to_try = [
+            getattr(config, "NVIDIA_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"),
+            getattr(config, "NVIDIA_FALLBACK_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"),
+            "meta/llama-3.2-11b-vision-instruct",
+        ]
+
+        import re
+        for model in models_to_try:
+            if not model:
+                continue
+            try:
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                resp = requests.post(url, json=payload, headers=headers, timeout=config.AGENT_TIMEOUT_SECONDS)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    choices = data.get("choices", [])
+                    if choices:
+                        text = choices[0].get("message", {}).get("content", "").strip()
+                        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                        if text:
+                            self._track_cost("nvidia_nim", model, len(prompt), len(text))
+                            self.logger.info("NVIDIA NIM/%s responded – %d chars", model, len(text))
+                            return text
+                else:
+                    self.logger.warning("NVIDIA NIM/%s returned HTTP %d: %s", model, resp.status_code, resp.text[:120])
+            except Exception as exc:
+                self.logger.warning("NVIDIA NIM/%s failed: %s", model, exc)
+
+        return None
 
     # ── Ollama ───────────────────────────────────────────────────────
 

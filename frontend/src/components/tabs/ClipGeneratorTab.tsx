@@ -1,369 +1,412 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { processVOD, getVODJobProgress, getClips, getClipVideoUrl, approveClip, rejectClip, cancelVODJob } from "@/lib/api";
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import confetti from "canvas-confetti";
+import {
+  Sparkles,
+  Play,
+  Download,
+  Upload,
+  CheckCircle2,
+  AlertCircle,
+  Clock,
+  Layers,
+  Flame,
+  Film,
+  Zap,
+  Wand2,
+  Copy,
+  Video,
+  Trash2,
+  Eye,
+  RefreshCw,
+} from "lucide-react";
+import {
+  processVOD,
+  getVODProgress,
+  getClips,
+  approveClip,
+  rejectClip,
+  getClipVideoUrl,
+  getClipThumbnailUrl,
+} from "@/lib/api";
 import VideoModal from "@/components/VideoModal";
 
-type JobState = {
-  jobId: string;
-  url: string;
-  progress: number;
-  status: string;
-};
-
-type Clip = {
-  clip_id: string;
-  moment_score: number;
-  emotion: string;
-  duration: number;
-  title: string;
-  transcript: string;
-  has_captions: number;
-  status: string;
-  created_at: number;
-  streamer_name: string;
-};
+const LAYOUTS = [
+  {
+    id: "gamer",
+    name: "Gamer Split",
+    desc: "Top facecam + bottom gameplay reframe",
+    badge: "Most Viral",
+    preview: "🎮",
+  },
+  {
+    id: "centered",
+    name: "AI Centered",
+    desc: "Smart 9:16 subject tracking & crop",
+    badge: "Clean",
+    preview: "🎯",
+  },
+  {
+    id: "cinematic",
+    name: "Full Portrait",
+    desc: "Full vertical blur backdrop + video",
+    badge: "9:16",
+    preview: "📱",
+  },
+];
 
 export default function ClipGeneratorTab() {
   const [url, setUrl] = useState("");
-  const [layoutType, setLayoutType] = useState("gamer");
-  const [error, setError] = useState("");
-  const [job, setJob] = useState<JobState | null>(null);
-  const [generatedClips, setGeneratedClips] = useState<Clip[]>([]);
-  const [playingClip, setPlayingClip] = useState<Clip | null>(null);
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const [selectedLayout, setSelectedLayout] = useState("gamer");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeJob, setActiveJob] = useState<any>(null);
+  const [generatedClips, setGeneratedClips] = useState<any[]>([]);
+  const [previewClip, setPreviewClip] = useState<any>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Poll job progress
+  // Poll for job progress
   useEffect(() => {
-    if (!job || job.progress >= 100) return;
-
-    const check = async () => {
+    let interval: any;
+    const checkProgress = async () => {
       try {
-        const d: any = await getVODJobProgress(job.jobId);
-        setJob(prev => prev ? { ...prev, progress: d.progress ?? prev.progress, status: d.status ?? prev.status } : null);
-        loadGeneratedClips();
-
-        if (d.progress >= 100 || d.status === "completed") {
-          if (pollRef.current) clearInterval(pollRef.current);
+        const data = await getVODProgress();
+        const jobs = Object.entries(data.progress || {});
+        if (jobs.length > 0) {
+          const [jobId, jobData]: [string, any] = jobs[jobs.length - 1];
+          setActiveJob({ id: jobId, ...jobData });
+          if (jobData.progress === 100) {
+            setIsSubmitting(false);
+            loadRecentClips();
+            confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+          }
         }
-      } catch { /* ignore poll errors */ }
+      } catch (e) {
+        // Silently handle polling error
+      }
     };
 
-    check();
-    pollRef.current = setInterval(check, 2000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [job?.jobId, job?.progress]);
+    checkProgress();
+    interval = setInterval(checkProgress, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const loadGeneratedClips = async () => {
+  const loadRecentClips = async () => {
     try {
-      const d: any = await getClips();
-      const vodClips = (d.clips || [])
-        .filter((c: Clip) => c.streamer_name === "VOD_Clipper")
-        .sort((a: Clip, b: Clip) => b.created_at - a.created_at);
-      setGeneratedClips(vodClips);
-    } catch { /* ignore */ }
-  };
-
-  useEffect(() => { loadGeneratedClips(); }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed) return;
-    setError("");
-
-    try {
-      const d: any = await processVOD(trimmed, layoutType);
-      setJob({ jobId: d.job_id, url: trimmed, progress: 5, status: "Starting..." });
-    } catch (e: any) {
-      setError(e.message || "Failed to start processing");
+      const data = await getClips();
+      setGeneratedClips((data.clips || []).slice(0, 8));
+    } catch (e) {
+      console.error(e);
     }
   };
 
-  const copyMetadata = (clip: any) => {
-    const text = `Title: ${clip.title || "Viral Clip"}\n\nDescription: ${clip.description || clip.transcript || ""}\n\nTags: ${(clip.tags || ["shorts", "viral"]).join(", ")}`;
-    navigator.clipboard.writeText(text);
-    alert("Metadata copied to clipboard!");
-  };
+  useEffect(() => {
+    loadRecentClips();
+  }, []);
 
-  const scoreColor = (score: number) => {
-    if (score >= 0.8) return "#ef4444";
-    if (score >= 0.6) return "#f59e0b";
-    return "#94a3b8";
-  };
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!url.trim()) return;
 
-  const emotionLabel = (e: string) => {
-    const map: Record<string, string> = {
-      joy: "Joy", anger: "Anger", surprise: "Surprise",
-      sadness: "Sadness", fear: "Fear", neutral: "Neutral",
-    };
-    return map[e] || e || "—";
-  };
-
-  const handleApprove = async (id: string) => {
+    setIsSubmitting(true);
     try {
-      await approveClip(id);
-      setGeneratedClips(prev => prev.map(c => c.clip_id === id ? { ...c, status: "approved" } : c));
-    } catch (e: any) { alert(e.message); }
+      const res = await processVOD(url, selectedLayout);
+      setActiveJob({
+        id: res.job_id,
+        url,
+        progress: 5,
+        status: "Initiating stream ingestion...",
+      });
+    } catch (err: any) {
+      setIsSubmitting(false);
+      alert(err.message || "Failed to start VOD process");
+    }
   };
 
-  const handleReject = async (id: string) => {
+  const handleApprove = async (clipId: string) => {
     try {
-      await rejectClip(id);
-      setGeneratedClips(prev => prev.filter(c => c.clip_id !== id));
-    } catch (e: any) { alert(e.message); }
+      await approveClip(clipId);
+      confetti({ particleCount: 50, spread: 60 });
+      loadRecentClips();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const copyTags = (tags: string[], id: string) => {
+    navigator.clipboard.writeText(tags.join(" "));
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
   };
 
   return (
-    <div>
-      <div className="section-header">
-        <h2 className="section-title">Manual Clip Generator</h2>
-        <p className="section-sub">Paste a YouTube URL to extract viral moments manually</p>
-      </div>
+    <div className="space-y-8 pb-12">
+      {/* ── Hero Banner ──────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-950/60 via-purple-950/40 to-slate-950/60 border border-indigo-500/20 p-8 shadow-2xl"
+      >
+        <div className="absolute top-0 right-0 -mt-12 -mr-12 w-96 h-96 bg-gradient-to-br from-indigo-500/10 to-pink-500/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* URL Input */}
-      <div className="card" style={{ padding: "32px", marginBottom: "32px", background: "linear-gradient(135deg, #ffffff, #faf9ff)" }}>
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-          <div>
-            <label className="label">Video URL</label>
-            <div style={{ display: "flex", gap: "12px", marginBottom: "16px" }}>
+        <div className="relative z-10 max-w-2xl space-y-3">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-extrabold tracking-wide uppercase">
+            <Wand2 className="w-3.5 h-3.5 text-pink-400" /> Automated Viral Factory
+          </div>
+          <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
+            Turn Any Stream or VOD into{" "}
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400">
+              High-CTR Shorts
+            </span>
+          </h2>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            AI-powered transcription (Whisper), instant excitement scoring, CFR 60fps cropping,
+            and animated dynamic subtitles ready for YouTube Shorts & TikTok.
+          </p>
+        </div>
+      </motion.div>
+
+      {/* ── Generator Form ────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="glass-panel p-8 space-y-6"
+      >
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Input URL Box */}
+          <div className="space-y-2">
+            <label className="text-xs font-extrabold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+              <Video className="w-4 h-4 text-red-500" /> Video or Stream URL
+            </label>
+            <div className="relative flex items-center">
               <input
-                className="input-field"
+                type="text"
                 value={url}
-                onChange={e => setUrl(e.target.value)}
-                placeholder="https://www.youtube.com/watch?v=..."
-                disabled={!!job && job.progress < 100}
-                style={{ flex: 1, height: "56px", fontSize: "15px" }}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://www.youtube.com/watch?v=... or Twitch VOD"
+                disabled={isSubmitting}
+                className="w-full bg-[#07090e] border border-white/10 focus:border-indigo-500 rounded-2xl px-5 py-4 text-white placeholder-slate-600 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 transition-all font-mono text-sm"
               />
               <button
-                type="submit"
-                className="btn-primary"
-                disabled={!url.trim() || (!!job && job.progress < 100)}
-                style={{ flexShrink: 0, minWidth: "220px", height: "56px" }}
+                type="button"
+                onClick={async () => {
+                  const text = await navigator.clipboard.readText();
+                  if (text) setUrl(text);
+                }}
+                className="absolute right-3 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-slate-300 transition-colors"
               >
-                {job && job.progress < 100 ? (
-                  <>
-                    <span className="spinner" />
-                    Processing...
-                  </>
-                ) : "Generate Viral Clips"}
+                Paste
               </button>
             </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <label className="label">Layout Style</label>
-            <div style={{ display: "flex", gap: "16px" }}>
-              <label style={{ 
-                flex: 1, display: "flex", alignItems: "center", gap: "12px", 
-                padding: "16px 20px", border: `2px solid ${layoutType === "gamer" ? "#6d4aff" : "#e2e8f0"}`, 
-                borderRadius: "14px", cursor: "pointer", background: layoutType === "gamer" ? "#f5f3ff" : "white",
-                transition: "all 0.2s", fontWeight: 700
-              }}>
-                <input 
-                  type="radio" 
-                  name="layoutType" 
-                  value="gamer" 
-                  checked={layoutType === "gamer"} 
-                  onChange={() => setLayoutType("gamer")} 
-                  style={{ accentColor: "#6d4aff", width: "18px", height: "18px" }}
-                />
-                <div>
-                  <p style={{ fontSize: "14px", color: "#0f0e17", margin: 0 }}>Gamer Style (Split-Screen)</p>
-                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0 0", fontWeight: 400 }}>Webcam on top, gameplay on bottom</p>
-                </div>
-              </label>
-
-              <label style={{ 
-                flex: 1, display: "flex", alignItems: "center", gap: "12px", 
-                padding: "16px 20px", border: `2px solid ${layoutType === "basic" ? "#6d4aff" : "#e2e8f0"}`, 
-                borderRadius: "14px", cursor: "pointer", background: layoutType === "basic" ? "#f5f3ff" : "white",
-                transition: "all 0.2s", fontWeight: 700
-              }}>
-                <input 
-                  type="radio" 
-                  name="layoutType" 
-                  value="basic" 
-                  checked={layoutType === "basic"} 
-                  onChange={() => setLayoutType("basic")} 
-                  style={{ accentColor: "#6d4aff", width: "18px", height: "18px" }}
-                />
-                <div>
-                  <p style={{ fontSize: "14px", color: "#0f0e17", margin: 0 }}>Basic 9:16 Crop</p>
-                  <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0 0", fontWeight: 400 }}>Standard portrait center crop</p>
-                </div>
-              </label>
+          {/* Layout Type Selection */}
+          <div className="space-y-3">
+            <label className="text-xs font-extrabold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+              <Layers className="w-4 h-4 text-indigo-400" /> Framing & Subtitle Style
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {LAYOUTS.map((layout) => {
+                const isSelected = selectedLayout === layout.id;
+                return (
+                  <button
+                    key={layout.id}
+                    type="button"
+                    onClick={() => setSelectedLayout(layout.id)}
+                    className={`relative p-5 rounded-2xl border text-left transition-all ${
+                      isSelected
+                        ? "bg-indigo-500/10 border-indigo-500 text-white shadow-lg shadow-indigo-500/10"
+                        : "bg-white/[0.02] border-white/5 text-slate-400 hover:border-white/20 hover:text-white"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-2xl">{layout.preview}</span>
+                      <span
+                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                          isSelected
+                            ? "bg-indigo-500 text-white"
+                            : "bg-white/5 text-slate-400"
+                        }`}
+                      >
+                        {layout.badge}
+                      </span>
+                    </div>
+                    <div className="font-bold text-sm text-white mb-1">{layout.name}</div>
+                    <div className="text-xs text-slate-400 leading-snug">{layout.desc}</div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {error && (
-            <p style={{ fontSize: "13px", fontWeight: 700, color: "#ef4444", background: "#fee2e2", padding: "10px 16px", borderRadius: "10px" }}>{error}</p>
-          )}
-        </form>
-      </div>
-
-      {/* Step-by-Step Progress Tracker */}
-      {job && (
-        <div className="card" style={{ padding: "32px", marginBottom: "32px", border: "1px solid #c4b5fd", background: "linear-gradient(135deg, #faf5ff, #f3e8ff)", borderRadius: "20px", boxShadow: "0 10px 30px rgba(109,74,255,0.08)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-            <div>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <span className="live-dot" />
-                <h3 style={{ fontSize: "16px", fontWeight: 900, color: "#3b0764", margin: 0 }}>
-                  {job.progress >= 100 ? "Processing Complete!" : "Pipeline Execution Active"}
-                </h3>
-              </div>
-              <p style={{ fontSize: "13px", color: "#6b21a8", fontWeight: 600, marginTop: "4px" }}>
-                {job.status || "Executing automated clipping steps..."}
-              </p>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-              {job.progress < 100 && job.status !== "Cancelled" && (
-                <button
-                  onClick={async () => {
-                    if (confirm("Are you sure you want to cancel this processing job?")) {
-                      try {
-                        if (job.jobId && job.jobId !== "submitting") await cancelVODJob(job.jobId);
-                        setJob(prev => prev ? { ...prev, status: "Cancelled", progress: 0 } : null);
-                      } catch (e: any) {
-                        alert(`Failed to cancel: ${e.message}`);
-                      }
-                    }
-                  }}
-                  style={{
-                    background: "#fee2e2", color: "#b91c1c", border: "none",
-                    borderRadius: "8px", padding: "8px 16px", fontSize: "12px",
-                    fontWeight: 800, cursor: "pointer", transition: "all 0.2s"
-                  }}
-                >
-                  Cancel Task
-                </button>
+          {/* Submit Button */}
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={isSubmitting || !url.trim()}
+              className="btn-primary-neon w-full py-4 text-base justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSubmitting ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  <span>Processing Stream Pipeline...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5 text-pink-300" />
+                  <span>Extract Viral Shorts Now</span>
+                </>
               )}
-              <div style={{ textAlign: "right" }}>
-                <span style={{ fontSize: "28px", fontWeight: 900, color: "#6d4aff" }}>{job.progress}%</span>
-              </div>
-            </div>
+            </button>
           </div>
+        </form>
 
-          {/* Progress Bar Track */}
-          <div className="progress-track" style={{ background: "#e9d5ff", height: "14px", borderRadius: "100px", overflow: "hidden", marginBottom: "24px" }}>
-            <div className="progress-fill" style={{ width: `${job.progress}%`, background: "linear-gradient(90deg, #8b5cf6, #6d4aff, #a855f7)", transition: "width 0.4s ease-out" }} />
-          </div>
-
-          {/* Step Pipeline Breakdown */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px" }}>
-            {[
-              { step: 1, name: "1. VOD Download", min: 0, max: 25 },
-              { step: 2, name: "2. Whisper Audio", min: 25, max: 55 },
-              { step: 3, name: "3. Viral Scoring", min: 55, max: 65 },
-              { step: 4, name: "4. Clip Rendering", min: 65, max: 90 },
-              { step: 5, name: "5. SEO & Thumbnails", min: 90, max: 100 },
-            ].map(s => {
-              const isDone = job.progress >= s.max;
-              const isActive = job.progress >= s.min && job.progress < s.max;
-              return (
-                <div key={s.step} style={{
-                  padding: "12px 14px", borderRadius: "12px",
-                  background: isDone ? "#dcfce7" : isActive ? "#ffffff" : "#f3e8ff",
-                  border: `1.5px solid ${isDone ? "#86efac" : isActive ? "#9333ea" : "#e9d5ff"}`,
-                  boxShadow: isActive ? "0 4px 12px rgba(147,51,234,0.15)" : "none",
-                  transition: "all 0.3s ease"
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                    <span style={{ fontSize: "10px", fontWeight: 900, textTransform: "uppercase", color: isDone ? "#15803d" : isActive ? "#7e22ce" : "#a855f7" }}>
-                      {isDone ? "✓ Done" : isActive ? "▶ Active" : "Pending"}
-                    </span>
-                  </div>
-                  <p style={{ fontSize: "12px", fontWeight: 800, color: isDone ? "#166534" : isActive ? "#581c87" : "#7e22ce", margin: 0, lineHeight: 1.2 }}>
-                    {s.name}
-                  </p>
+        {/* ── Active Job Progression Bar ─────────────── */}
+        <AnimatePresence>
+          {activeJob && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="p-6 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full bg-indigo-400 animate-ping" />
+                  <span className="font-bold text-sm text-white">{activeJob.status}</span>
                 </div>
+                <span className="font-mono text-indigo-400 font-extrabold text-sm">
+                  {activeJob.progress}%
+                </span>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden border border-white/5">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${activeJob.progress}%` }}
+                  transition={{ duration: 0.4, ease: "easeOut" }}
+                  className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full"
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+
+      {/* ── Generated Clips Showcase ──────────────────── */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-xl font-bold text-white tracking-tight">Recent Generated Clips</h3>
+            <p className="text-xs text-slate-400">Transcoded in CFR 60fps portrait format</p>
+          </div>
+          <button
+            onClick={loadRecentClips}
+            className="btn-secondary-glass py-2 px-3 text-xs"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Refresh Vault
+          </button>
+        </div>
+
+        {generatedClips.length === 0 ? (
+          <div className="glass-panel p-12 text-center space-y-3">
+            <Film className="w-12 h-12 text-slate-600 mx-auto" />
+            <p className="text-slate-400 font-medium text-sm">No clips generated yet.</p>
+            <p className="text-xs text-slate-500">
+              Submit a stream or YouTube URL above to automatically generate viral clips.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {generatedClips.map((clip, index) => {
+              const scorePct = Math.round((clip.moment_score || 0.8) * 100);
+              return (
+                <motion.div
+                  key={clip.clip_id}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="group relative glass-panel overflow-hidden flex flex-col justify-between hover:border-indigo-500/50 transition-all duration-300"
+                >
+                  {/* Thumbnail / Video Preview Top */}
+                  <div
+                    className="relative aspect-[9/16] bg-black overflow-hidden cursor-pointer"
+                    onClick={() => setPreviewClip(clip)}
+                  >
+                    <img
+                      src={getClipThumbnailUrl(clip.clip_id)}
+                      alt={clip.title || clip.clip_id}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      onError={(e: any) => {
+                        e.target.style.display = "none";
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+
+                    {/* Viral Score Badge */}
+                    <div className="absolute top-3 left-3">
+                      <span className="badge-viral flex items-center gap-1">
+                        <Flame className="w-3.5 h-3.5 text-rose-400" /> {scorePct}%
+                      </span>
+                    </div>
+
+                    {/* Duration Badge */}
+                    <div className="absolute top-3 right-3 px-2 py-1 rounded-md bg-black/60 backdrop-blur-md text-[11px] font-mono text-white font-bold">
+                      {Math.round(clip.duration || 30)}s
+                    </div>
+
+                    {/* Center Play Button Icon */}
+                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="w-12 h-12 rounded-full bg-indigo-600/90 text-white flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-transform">
+                        <Play className="w-5 h-5 fill-current ml-0.5" />
+                      </div>
+                    </div>
+
+                    {/* Hook Title Snippet */}
+                    <div className="absolute bottom-3 left-3 right-3">
+                      <h4 className="text-xs font-extrabold text-white line-clamp-2 drop-shadow-md">
+                        {clip.title || clip.transcript || "Viral Moment"}
+                      </h4>
+                    </div>
+                  </div>
+
+                  {/* Actions Footer */}
+                  <div className="p-4 space-y-3 bg-[#0a0d16]">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span className="capitalize text-slate-300 font-bold">{clip.emotion || "Hype"}</span>
+                      <span className="text-[11px] font-mono text-slate-500">CFR 60fps</span>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => handleApprove(clip.clip_id)}
+                        className="flex-1 btn-primary-neon py-2 px-3 text-xs justify-center"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                      </button>
+                      <button
+                        onClick={() => setPreviewClip(clip)}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 transition-colors"
+                        title="Inspect Video & Captions"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
               );
             })}
           </div>
-        </div>
+        )}
+      </div>
+
+      {/* ── Modal Video Player ───────────────────────── */}
+      {previewClip && (
+        <VideoModal clip={previewClip} onClose={() => setPreviewClip(null)} />
       )}
-
-      {/* Generated Clips */}
-      {generatedClips.length > 0 && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
-            <h3 style={{ fontSize: "18px", fontWeight: 900, color: "#0f0e17" }}>Extracted Highlights</h3>
-            <button className="btn-secondary" onClick={loadGeneratedClips} style={{ height: "36px", fontSize: "12px" }}>Refresh List</button>
-          </div>
-
-          <div className="grid-4">
-            {generatedClips.map(clip => (
-              <div key={clip.clip_id} className="clip-card" style={{ display: "flex", flexDirection: "column", borderRadius: "16px", overflow: "hidden" }}>
-                {/* Preview Thumbnail */}
-                <div 
-                  style={{ position: "relative", width: "100%", aspectRatio: "9/16", background: "#000", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                  onClick={() => setPlayingClip(clip)}
-                >
-                  <div className="play-btn-tiny">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  </div>
-                  <div style={{ 
-                    position: "absolute", top: "10px", right: "10px", 
-                    background: clip.moment_score >= 0.8 ? "#ef4444" : "rgba(0,0,0,0.6)", 
-                    color: "white", fontSize: "10px", fontWeight: 900, padding: "2px 8px", borderRadius: "100px" 
-                  }}>
-                    {Math.round(clip.moment_score * 100)}%
-                  </div>
-                  <div style={{ position: "absolute", bottom: "10px", right: "10px", background: "rgba(0,0,0,0.7)", color: "white", fontSize: "10px", fontWeight: 800, padding: "2px 6px", borderRadius: "6px" }}>
-                    {Math.floor(clip.duration)}s
-                  </div>
-                </div>
-
-                {/* Info (Compact) */}
-                <div style={{ padding: "14px", flex: 1, display: "flex", flexDirection: "column" }}>
-                  <div style={{ display: "flex", gap: "6px", marginBottom: "8px" }}>
-                    <span className="badge" style={{ fontSize: "9px", background: "#f3f0ff", color: "#6d4aff" }}>{emotionLabel(clip.emotion)}</span>
-                    <span className={`badge ${clip.status === "approved" ? "badge-success" : clip.status === "rejected" ? "badge-failed" : "badge-processing"}`} style={{ fontSize: "9px" }}>
-                      {clip.status}
-                    </span>
-                  </div>
-
-                  <h4 style={{ fontSize: "13px", fontWeight: 800, color: "#0f0e17", marginBottom: "12px", lineHeight: 1.3, height: "34px", overflow: "hidden" }}>
-                    {clip.title}
-                  </h4>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", marginBottom: "6px" }}>
-                    <button className="btn-approve" style={{ height: "32px", fontSize: "11px", padding: "0" }} onClick={() => handleApprove(clip.clip_id)}>Approve</button>
-                    <button className="btn-reject" style={{ height: "32px", fontSize: "11px", padding: "0" }} onClick={() => handleReject(clip.clip_id)}>Reject</button>
-                  </div>
-
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    <button className="btn-secondary" style={{ flex: 1, height: "32px", fontSize: "11px", padding: "0" }} onClick={() => copyMetadata(clip)}>Meta</button>
-                    <button className="btn-secondary" style={{ flex: 1, height: "32px", fontSize: "11px", padding: "0" }} onClick={() => setPlayingClip(clip)}>Watch</button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {playingClip && (
-        <VideoModal clipId={playingClip.clip_id} title={playingClip.title} onClose={() => setPlayingClip(null)} />
-      )}
-
-      <style>{`
-        .grid-4 {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-          gap: 20px;
-        }
-        .play-btn-tiny {
-          width: 44px; height: 44px; border-radius: 50%; background: rgba(109,74,255,0.85);
-          display: flex; alignItems: center; justifyContent: center;
-          box-shadow: 0 8px 20px rgba(109,74,255,0.3); transition: all 0.2s;
-        }
-        .clip-card:hover .play-btn-tiny { transform: scale(1.1); background: #6d4aff; }
-        .spinner { width: 16px; height: 16px; border: 2.5px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-      `}</style>
     </div>
   );
 }

@@ -33,7 +33,8 @@ class SEOGenerator:
 
     def __init__(self):
         self.nvidia_api_key = getattr(config, "NVIDIA_API_KEY", "") or os.environ.get("NVIDIA_API_KEY", "")
-        self.nvidia_model = getattr(config, "NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
+        self.nvidia_model = getattr(config, "NVIDIA_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
+        self.nvidia_fallback_model = getattr(config, "NVIDIA_FALLBACK_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
         self.ollama_host = getattr(config, "OLLAMA_HOST", "http://localhost:11434")
         self.model = getattr(config, "OLLAMA_MODEL", "llama3")
         self.fallback_model = getattr(config, "OLLAMA_FALLBACK_MODEL", "mistral")
@@ -42,18 +43,21 @@ class SEOGenerator:
         """Generate metadata using NVIDIA NIM Blueprint API, Ollama, or templates."""
         prompt = self._build_prompt(transcript, streamer_name, emotion, platform)
 
-        # 0. Try NVIDIA NIM Cloud Endpoint (Meta Llama 3.1 70B / Nemotron)
+        # 0. Try NVIDIA NIM Cloud Endpoint (Nemotron 3 Ultra / Nemotron 3.5 / Llama 3.2)
         if self.nvidia_api_key:
-            try:
-                logger.info("Requesting SEO metadata from NVIDIA NIM model: %s", self.nvidia_model)
-                response = self._call_nvidia_nim(prompt, self.nvidia_model)
-                if response:
-                    meta = self._parse_response(response)
-                    if meta:
-                        meta.generated_by = "nvidia_nim"
-                        return meta
-            except Exception as e:
-                logger.warning("NVIDIA NIM call (%s) failed: %s", self.nvidia_model, e)
+            for n_model in [self.nvidia_model, self.nvidia_fallback_model, "meta/llama-3.2-11b-vision-instruct"]:
+                if not n_model:
+                    continue
+                try:
+                    logger.info("Requesting SEO metadata from NVIDIA NIM model: %s", n_model)
+                    response = self._call_nvidia_nim(prompt, n_model)
+                    if response:
+                        meta = self._parse_response(response)
+                        if meta:
+                            meta.generated_by = f"nvidia_nim:{n_model}"
+                            return meta
+                except Exception as e:
+                    logger.warning("NVIDIA NIM call (%s) failed: %s", n_model, e)
 
         # 1. Try primary Ollama model
         try:
@@ -158,28 +162,49 @@ Constraints:
 
     def _parse_response(self, response: str) -> Optional[SEOMetadata]:
         """Robustly parse JSON object from LLM generation response string."""
+        import re
         try:
             cleaned = response.strip()
+            # Remove thinking/reasoning tags if present
+            cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
             
-            # Remove potential markdown block wraps
-            if "```" in cleaned:
-                blocks = cleaned.split("```")
-                for block in blocks:
-                    block_clean = block.strip()
-                    if block_clean.startswith("json"):
-                        block_clean = block_clean[4:].strip()
-                    if block_clean.startswith("{") and block_clean.endswith("}"):
-                        cleaned = block_clean
+            data = None
+            # 1. Try markdown code block matches
+            code_blocks = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, flags=re.DOTALL)
+            if code_blocks:
+                for block in reversed(code_blocks):
+                    try:
+                        data = json.loads(block)
+                        if isinstance(data, dict) and "title" in data:
+                            break
+                    except Exception:
+                        data = None
+
+            # 2. Try raw_decode iteratively
+            if not data:
+                decoder = json.JSONDecoder()
+                pos = 0
+                while pos < len(cleaned):
+                    start = cleaned.find("{", pos)
+                    if start == -1:
                         break
-            
-            # Find boundaries of the JSON object
-            start = cleaned.find("{")
-            end = cleaned.rfind("}") + 1
-            if start >= 0 and end > start:
-                json_str = cleaned[start:end]
-                data = json.loads(json_str)
-                
-                # Apply length constraints safely
+                    try:
+                        obj, idx = decoder.raw_decode(cleaned[start:])
+                        if isinstance(obj, dict) and ("title" in obj or "description" in obj):
+                            data = obj
+                            break
+                        pos = start + 1
+                    except Exception:
+                        pos = start + 1
+
+            # 3. Fallback to outermost braces
+            if not data:
+                start = cleaned.find("{")
+                end = cleaned.rfind("}") + 1
+                if start >= 0 and end > start:
+                    data = json.loads(cleaned[start:end])
+
+            if isinstance(data, dict):
                 title = data.get("title", "")[:80]
                 description = data.get("description", "")
                 tags = [str(t).lower() for t in data.get("tags", [])][:8]
@@ -192,10 +217,10 @@ Constraints:
                     tags=tags,
                     hook_text=hook_text,
                     thumbnail_prompt=thumbnail_prompt,
-                    generated_by="ollama"
+                    generated_by="nvidia_nim"
                 )
         except Exception as e:
-            logger.error("Failed to parse JSON response from Ollama: %s", e)
+            logger.error("Failed to parse JSON response from LLM: %s", e)
         return None
 
     def _template_generate(self, transcript: str, streamer_name: str, emotion: str) -> SEOMetadata:

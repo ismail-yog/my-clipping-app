@@ -1,0 +1,1 @@
+"""StreamClipper test suite."""

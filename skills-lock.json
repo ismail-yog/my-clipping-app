@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "jetson-video-benchmark": {
+      "source": "NVIDIA/skills",
+      "sourceType": "github",
+      "skillPath": "skills/jetson-video-benchmark/SKILL.md",
+      "computedHash": "23bef1de7c96e19bcdc4d69c53615c0bab72fbb8be0d829019b92549c95b20de"
+    },
+    "jetson-video-pipeline": {
+      "source": "NVIDIA/skills",
+      "sourceType": "github",
+      "skillPath": "skills/jetson-video-pipeline/SKILL.md",
+      "computedHash": "c8e98a76382d7cad617a0f7f6f6685da58108f27c77f3f8a8f518c68465f19d3"
+    },
+    "jetson-video-recipe": {
+      "source": "NVIDIA/skills",
+      "sourceType": "github",
+      "skillPath": "skills/jetson-video-recipe/SKILL.md",
+      "computedHash": "8e07acb8290c9839ca0ffc621dd85d972fe081a031b9f8a6ea3f86bd4b1cd78d"
+    },
+    "jetson-video-setup": {
+      "source": "NVIDIA/skills",
+      "sourceType": "github",
+      "skillPath": "skills/jetson-video-setup/SKILL.md",
+      "computedHash": "0734cba91d4da8404e2532924c7759f2e2e7e7d80c94e3598d7aef2b64f451f9"
+    }
+  }
+}

@@ -1,38 +1,45 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { getClips, approveClip, rejectClip } from "@/lib/api";
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import confetti from "canvas-confetti";
+import {
+  Film,
+  Flame,
+  CheckCircle2,
+  XCircle,
+  Play,
+  Search,
+  RefreshCw,
+  Eye,
+  Trash2,
+  Sparkles,
+} from "lucide-react";
+import { getClips, approveClip, rejectClip, getClipThumbnailUrl } from "@/lib/api";
 import VideoModal from "@/components/VideoModal";
 
-type Clip = {
-  clip_id: string;
-  title: string;
-  streamer_name: string;
-  status: string;
-  duration?: number;
-  thumbnail?: string;
-  moment_score?: number;
-  created_at?: number;
-};
-
 export default function ClipsTab() {
-  const [clips, setClips] = useState<Clip[]>([]);
+  const [clips, setClips] = useState<any[]>([]);
   const [filter, setFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [playingClip, setPlayingClip] = useState<Clip | null>(null);
+  const [selectedClip, setSelectedClip] = useState<any | null>(null);
 
-  const load = (status?: string) => {
+  const load = async (status?: string) => {
     setLoading(true);
-    getClips(status)
-      .then((d: any) => {
-        const list = d.clips || d || [];
-        setClips(list);
-      })
-      .catch(() => setClips([]))
-      .finally(() => setLoading(false));
+    try {
+      const data = await getClips(status);
+      setClips(data.clips || data || []);
+    } catch (e) {
+      setClips([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   const handleFilter = (f: string) => {
     setFilter(f);
@@ -42,148 +49,214 @@ export default function ClipsTab() {
   const handleApprove = async (id: string) => {
     try {
       await approveClip(id);
-      // Immediately remove from the current view if we are in 'pending_review' filter
-      if (filter === "pending_review") {
-        setClips(prev => prev.filter(c => c.clip_id !== id));
-      } else {
-        setClips(prev => prev.map(c => c.clip_id === id ? { ...c, status: "approved" } : c));
-      }
-    } catch (e) { console.error(e); }
+      confetti({ particleCount: 60, spread: 60 });
+      setClips((prev) =>
+        prev.map((c) => (c.clip_id === id ? { ...c, status: "approved" } : c))
+      );
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleReject = async (id: string) => {
     try {
       await rejectClip(id);
-      // Always remove from view because it is physically deleted
-      setClips(prev => prev.filter(c => c.clip_id !== id));
-    } catch (e) { console.error(e); }
+      setClips((prev) => prev.filter((c) => c.clip_id !== id));
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const filters = [
-    { id: "all", label: "All" },
-    { id: "pending_review", label: "Pending" },
+  const filteredClips = clips.filter((c) => {
+    const titleMatch = (c.title || c.clip_id || "").toLowerCase().includes(searchQuery.toLowerCase());
+    const transcriptMatch = (c.transcript || "").toLowerCase().includes(searchQuery.toLowerCase());
+    return titleMatch || transcriptMatch;
+  });
+
+  const FILTERS = [
+    { id: "all", label: "All Clips" },
+    { id: "pending_review", label: "Pending Review" },
     { id: "approved", label: "Approved" },
+    { id: "uploaded", label: "Uploaded" },
   ];
 
   return (
-    <div>
-      <div className="section-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "32px" }}>
+    <div className="space-y-8 pb-12">
+      {/* ── Top Controls ────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h2 className="section-title" style={{ fontSize: "24px" }}>Review Station</h2>
-          <p className="section-sub">{clips.length} clip{clips.length !== 1 ? "s" : ""} in view</p>
+          <h2 className="text-2xl font-black text-white tracking-tight">Clip Review Vault</h2>
+          <p className="text-xs text-slate-400">
+            {filteredClips.length} clip{filteredClips.length !== 1 ? "s" : ""} available
+          </p>
         </div>
-        <div className="tab-pills" style={{ background: "#f1f2f7", padding: "4px", borderRadius: "12px" }}>
-          {filters.map(f => (
-            <button 
-              key={f.id} 
-              className={`tab-pill ${filter === f.id ? "active" : ""}`} 
-              onClick={() => handleFilter(f.id)}
-              style={{ padding: "6px 16px", fontSize: "13px", fontWeight: 700 }}
-            >
-              {f.label}
-            </button>
-          ))}
+
+        {/* Filter & Search */}
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+          {/* Search Box */}
+          <div className="relative flex-1 sm:w-64">
+            <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search transcript or title..."
+              className="w-full bg-[#0c0f1d] border border-white/10 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex items-center p-1 rounded-xl bg-white/[0.03] border border-white/5">
+            {FILTERS.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => handleFilter(f.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  filter === f.id
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
+      {/* ── Clips Grid ───────────────────────────────── */}
       {loading ? (
-        <div style={{ padding: "80px", textAlign: "center", color: "#94a3b8", fontWeight: 700 }}>Loading...</div>
-      ) : clips.length === 0 ? (
-        <div className="card" style={{ padding: "80px", textAlign: "center", color: "#94a3b8" }}>
-          <p style={{ fontSize: "16px", fontWeight: 700, marginBottom: "8px" }}>No clips found</p>
-          <p style={{ fontSize: "13px" }}>Check back later for new highlights</p>
+        <div className="glass-panel p-16 text-center space-y-3">
+          <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mx-auto" />
+          <p className="text-sm font-bold text-slate-400">Loading Clip Vault...</p>
+        </div>
+      ) : filteredClips.length === 0 ? (
+        <div className="glass-panel p-16 text-center space-y-3">
+          <Film className="w-12 h-12 text-slate-600 mx-auto" />
+          <p className="text-sm font-bold text-slate-300">No clips found in this view.</p>
+          <p className="text-xs text-slate-500">Try changing filter or generating new VOD clips.</p>
         </div>
       ) : (
-        <div className="grid-4">
-          {clips.map((clip) => (
-            <div key={clip.clip_id} className="clip-card" style={{ padding: "0", overflow: "hidden", borderRadius: "16px" }}>
-              {/* Preview Area (Smaller) */}
-              <div 
-                style={{ aspectRatio: "9/16", background: "#000", position: "relative", cursor: "pointer" }}
-                onClick={() => setPlayingClip(clip)}
-              >
-                <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <div className="play-btn-tiny">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <AnimatePresence>
+            {filteredClips.map((clip, idx) => {
+              const scorePct = Math.round((clip.moment_score || 0.85) * 100);
+              return (
+                <motion.div
+                  key={clip.clip_id}
+                  layout
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{ delay: idx * 0.03 }}
+                  className="group glass-panel overflow-hidden flex flex-col justify-between hover:border-indigo-500/50 transition-all duration-300"
+                >
+                  {/* Thumbnail Video Top */}
+                  <div
+                    className="relative aspect-[9/16] bg-black cursor-pointer overflow-hidden"
+                    onClick={() => setSelectedClip(clip)}
+                  >
+                    <img
+                      src={getClipThumbnailUrl(clip.clip_id)}
+                      alt={clip.title || clip.clip_id}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      onError={(e: any) => {
+                        e.target.style.display = "none";
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+
+                    {/* Viral Badge */}
+                    <div className="absolute top-3 left-3">
+                      <span className="badge-viral">
+                        <Flame className="w-3.5 h-3.5 text-rose-400" /> {scorePct}%
+                      </span>
+                    </div>
+
+                    {/* Duration */}
+                    <div className="absolute top-3 right-3 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-[11px] font-mono font-bold text-white">
+                      {Math.round(clip.duration || 30)}s
+                    </div>
+
+                    {/* Play Icon on Hover */}
+                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="w-12 h-12 rounded-full bg-indigo-600/90 text-white flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-transform">
+                        <Play className="w-5 h-5 fill-current ml-0.5" />
+                      </div>
+                    </div>
+
+                    {/* Title */}
+                    <div className="absolute bottom-3 left-3 right-3">
+                      <h4 className="text-xs font-bold text-white line-clamp-2 drop-shadow-md">
+                        {clip.title || clip.transcript || "Viral Highlight"}
+                      </h4>
+                    </div>
                   </div>
-                </div>
-                {clip.moment_score != null && (
-                  <span style={{ 
-                    position: "absolute", top: "10px", right: "10px", 
-                    background: clip.moment_score >= 0.8 ? "#ef4444" : "rgba(0,0,0,0.6)", 
-                    color: "white", fontSize: "10px", fontWeight: 900, padding: "2px 8px", borderRadius: "100px",
-                    boxShadow: clip.moment_score >= 0.8 ? "0 4px 10px rgba(239,68,68,0.4)" : "none"
-                  }}>
-                    {Math.round(clip.moment_score * 100)}%
-                  </span>
-                )}
-                <span className={`badge ${clip.status === "approved" ? "badge-success" : clip.status === "rejected" ? "badge-failed" : "badge-processing"}`}
-                  style={{ position: "absolute", top: "10px", left: "10px", fontSize: "9px", padding: "2px 6px" }}>
-                  {clip.status}
-                </span>
-              </div>
 
-              {/* Minimal Info */}
-              <div style={{ padding: "12px" }}>
-                <p style={{ fontSize: "10px", fontWeight: 800, color: "#6d4aff", textTransform: "uppercase", marginBottom: "4px" }}>
-                  {clip.streamer_name}
-                </p>
-                <h3 style={{ fontSize: "13px", fontWeight: 800, color: "#0f0e17", lineHeight: 1.3, marginBottom: "12px", height: "34px", overflow: "hidden" }}>
-                  {clip.title || "Untitled"}
-                </h3>
+                  {/* Actions Footer */}
+                  <div className="p-4 space-y-3 bg-[#0a0d16]">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span className="capitalize text-slate-300 font-bold">
+                        {clip.emotion || "Hype"}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                          clip.status === "approved"
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                            : clip.status === "uploaded"
+                            ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                            : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                        }`}
+                      >
+                        {clip.status || "Pending"}
+                      </span>
+                    </div>
 
-                <div style={{ display: "flex", gap: "6px" }}>
-                  {clip.status === "pending_review" && (
-                    <>
-                      <button 
-                        className="btn-approve" 
-                        style={{ flex: 1, height: "32px", fontSize: "11px", padding: "0" }} 
-                        onClick={(e) => { e.stopPropagation(); handleApprove(clip.clip_id); }}
-                      >
-                        Approve
-                      </button>
-                      <button 
-                        className="btn-reject" 
-                        style={{ flex: 1, height: "32px", fontSize: "11px", padding: "0" }} 
-                        onClick={(e) => { e.stopPropagation(); handleReject(clip.clip_id); }}
-                      >
-                        Reject
-                      </button>
-                    </>
-                  )}
-                  {clip.status !== "pending_review" && (
-                     <button className="btn-secondary" style={{ flex: 1, height: "32px", fontSize: "11px" }} onClick={() => setPlayingClip(clip)}>
-                        Watch
-                     </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
+                    <div className="flex items-center gap-2 pt-1">
+                      {clip.status !== "approved" && clip.status !== "uploaded" ? (
+                        <>
+                          <button
+                            onClick={() => handleApprove(clip.clip_id)}
+                            className="flex-1 btn-primary-neon py-2 px-3 text-xs justify-center"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                          </button>
+                          <button
+                            onClick={() => handleReject(clip.clip_id)}
+                            className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors"
+                            title="Reject & Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => setSelectedClip(clip)}
+                          className="w-full btn-secondary-glass py-2 px-3 text-xs justify-center"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> View Details & SEO
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
         </div>
       )}
 
-      {playingClip && (
-        <VideoModal 
-          clipId={playingClip.clip_id} 
-          title={playingClip.title} 
-          onClose={() => setPlayingClip(null)} 
+      {/* ── Video Modal ─────────────────────────────── */}
+      {selectedClip && (
+        <VideoModal
+          clip={selectedClip}
+          onClose={() => setSelectedClip(null)}
+          onApproveSuccess={() => {
+            load(filter === "all" ? undefined : filter);
+            setSelectedClip(null);
+          }}
         />
       )}
-
-      <style>{`
-        .grid-4 {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-          gap: 20px;
-        }
-        .play-btn-tiny {
-          width: 40px; height: 40px; border-radius: 50%; background: rgba(109,74,255,0.8);
-          display: flex; alignItems: center; justifyContent: center;
-          transition: all 0.2s;
-        }
-        .clip-card:hover .play-btn-tiny { transform: scale(1.1); background: #6d4aff; }
-      `}</style>
     </div>
   );
 }
