@@ -72,14 +72,27 @@ export default function ClipGeneratorTab() {
     const checkProgress = async () => {
       try {
         const data = await getVODProgress();
-        const jobs = Object.entries(data.progress || {});
+        const rawJobs = data.progress || data.jobs || {};
+        const jobs = Object.entries(rawJobs);
         if (jobs.length > 0) {
-          const [jobId, jobData]: [string, any] = jobs[jobs.length - 1];
-          setActiveJob({ id: jobId, ...jobData });
-          if (jobData.progress === 100) {
+          // Find matching job or pick latest
+          let targetJob = activeJob?.id && rawJobs[activeJob.id]
+            ? { id: activeJob.id, ...rawJobs[activeJob.id] }
+            : null;
+
+          if (!targetJob) {
+            const [jobId, jobData]: [string, any] = jobs[jobs.length - 1];
+            targetJob = { id: jobId, ...jobData };
+          }
+
+          setActiveJob(targetJob);
+
+          if (targetJob.progress === 100) {
             setIsSubmitting(false);
             loadRecentClips();
             confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+          } else if (targetJob.progress === 0 && targetJob.status?.toLowerCase().includes("fail")) {
+            setIsSubmitting(false);
           }
         }
       } catch (e) {
@@ -88,9 +101,9 @@ export default function ClipGeneratorTab() {
     };
 
     checkProgress();
-    interval = setInterval(checkProgress, 2000);
+    interval = setInterval(checkProgress, 1500);
     return () => clearInterval(interval);
-  }, []);
+  }, [activeJob?.id]);
 
   const loadRecentClips = async () => {
     try {

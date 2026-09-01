@@ -181,7 +181,7 @@ async def process_streamer(streamer_id: int):
 @router.get("/progress")
 async def get_vod_progress():
     """Get progress of all active VOD processing jobs."""
-    return {"jobs": VOD_PROGRESS}
+    return {"jobs": VOD_PROGRESS, "progress": VOD_PROGRESS}
 
 
 @router.get("/progress/{job_id}")

@@ -349,7 +349,7 @@ class VODProcessor:
                 threading.Timer(30, lambda: VOD_PROGRESS.pop(job_id, None)).start()
 
     def _download_vod(self, url: str, progress_callback = None) -> Tuple[Optional[Path], str]:
-        """Download VOD with yt-dlp and fallback to streamlink for live/kick/twitch."""
+        """Download VOD with yt-dlp and fallback to streamlink with continuous progress telemetry."""
         import re
         test_path = config.TEMP_MEDIA_DIR / f"vod_{self._current_vid}" / "video.mp4"
         if test_path.exists():
@@ -357,15 +357,44 @@ class VODProcessor:
             return test_path, ""
 
         timestamp = int(time.time())
-        output_path = config.RAW_DIR / f"vod_{timestamp}.mp4"
+        output_template = str(config.RAW_DIR / f"vod_{timestamp}.%(ext)s")
+        target_mp4 = config.RAW_DIR / f"vod_{timestamp}.mp4"
         res = config.vod_settings.download_resolution
 
         def parse_line(line: str):
-            match = re.search(r"\[download\]\s+(\d+\.\d+)%", line)
-            if match and progress_callback:
-                dl_pct = float(match.group(1))
+            if not progress_callback:
+                return
+            clean = line.strip()
+            if not clean:
+                return
+
+            # 1. Custom yt-dlp progress template
+            tpl_match = re.search(r"download-progress:\s*([0-9\.]+)%", clean)
+            if tpl_match:
+                dl_pct = float(tpl_match.group(1))
                 mapped = 5 + int((dl_pct / 100.0) * 20.0)
-                progress_callback(mapped, f"Downloading VOD ({dl_pct:.1f}%)...")
+                progress_callback(mapped, f"Downloading video stream ({dl_pct:.1f}%)...")
+                return
+
+            # 2. Standard yt-dlp percentage (supports 100%, 45.2%, etc.)
+            pct_match = re.search(r"\[download\]\s+([0-9\.]+)%", clean)
+            if pct_match:
+                dl_pct = float(pct_match.group(1))
+                mapped = 5 + int((dl_pct / 100.0) * 20.0)
+                progress_callback(mapped, f"Downloading video stream ({dl_pct:.1f}%)...")
+                return
+
+            # 3. Informative milestone updates
+            if "[youtube]" in clean and "Extracting" in clean:
+                progress_callback(6, "Connecting to YouTube media servers...")
+            elif "[youtube]" in clean and "Downloading" in clean:
+                progress_callback(8, "Fetching player manifest and metadata...")
+            elif "[info]" in clean and "Downloading" in clean:
+                progress_callback(10, "Resolving video and audio tracks...")
+            elif "Destination:" in clean:
+                progress_callback(12, "Writing video chunks to disk...")
+            elif "frame=" in clean:
+                progress_callback(22, "Muxing video & audio streams...")
 
         # 1. Try yt-dlp
         cmd = [
@@ -374,23 +403,32 @@ class VODProcessor:
             "--no-colors",
             "--no-playlist",
             "--no-check-certificate",
+            "--extractor-args", "youtube:player_client=default,web,android",
+            "--concurrent-fragments", "4",
+            "--buffer-size", "16K",
+            "--progress-template", "download-progress:%(progress._percent_str)s:%(progress._eta_str)s:%(progress._speed_str)s",
             "--merge-output-format", "mp4",
-            "-f", f"bestvideo[height<={res}]+bestaudio/best[height<={res}]/best",
-            "-o", str(output_path),
+            "-f", f"bestvideo[height<={res}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={res}]+bestaudio/best[height<={res}]/best",
+            "-o", output_template,
             url,
         ]
 
         try:
             logger.info("Running yt-dlp download: %s", " ".join(cmd))
-            r = self.run_subprocess(cmd, timeout=600, line_callback=parse_line)
-            if output_path.exists() and output_path.stat().st_size > 0:
-                return output_path, ""
+            r = self.run_subprocess(cmd, timeout=900, line_callback=parse_line)
+
+            if target_mp4.exists() and target_mp4.stat().st_size > 0:
+                progress_callback(25, "Download and stream ingest complete!")
+                return target_mp4, ""
 
             pattern = f"vod_{timestamp}*"
-            matches = list(config.RAW_DIR.glob(pattern))
-            if matches and matches[0].exists() and matches[0].stat().st_size > 0:
-                logger.info("Found downloaded video via match: %s", matches[0])
-                return matches[0], ""
+            matches = [p for p in config.RAW_DIR.glob(pattern) if p.is_file() and not p.name.endswith(".part")]
+            if matches:
+                chosen = max(matches, key=lambda p: p.stat().st_size)
+                if chosen.stat().st_size > 0:
+                    logger.info("Found downloaded video via file pattern match: %s", chosen)
+                    progress_callback(25, "Download and stream ingest complete!")
+                    return chosen, ""
 
             err_out = (r.stderr or "").strip()
             if "404" in err_out:
@@ -406,14 +444,15 @@ class VODProcessor:
                 logger.info("Attempting Streamlink fallback for %s...", url)
                 streamlink_cmd = [
                     "streamlink",
-                    "--output", str(output_path),
+                    "--output", str(target_mp4),
                     url,
                     "best",
                     "--hls-duration", "120",
                 ]
                 sr = self.run_subprocess(streamlink_cmd, timeout=180)
-                if output_path.exists() and output_path.stat().st_size > 0:
-                    return output_path, ""
+                if target_mp4.exists() and target_mp4.stat().st_size > 0:
+                    progress_callback(25, "Streamlink ingest complete!")
+                    return target_mp4, ""
             except Exception as e:
                 logger.error("Streamlink fallback also failed: %s", e)
 
