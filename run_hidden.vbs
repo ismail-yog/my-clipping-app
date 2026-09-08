@@ -6,7 +6,7 @@ strRootDir = fso.GetParentFolderName(WScript.ScriptFullName)
 WshShell.CurrentDirectory = strRootDir
 
 ' Kill existing processes holding ports 8000 (Backend) and 3000 (Frontend)
-WshShell.Run "powershell -WindowStyle Hidden -Command ""Stop-Process -Id (Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue; Stop-Process -Id (Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue""", 0, True
+WshShell.Run "powershell -WindowStyle Hidden -Command ""Get-NetTCPConnection -LocalPort 8000,3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }""", 0, True
 
 ' Start Backend hidden using PATH resolution
 WshShell.CurrentDirectory = strRootDir

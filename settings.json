@@ -1,10 +1,22 @@
 {
-  "max_clips": 15,
-  "clip_duration": 45,
+  "max_clips": 10,
+  "clip_duration": 35,
   "download_resolution": 1080,
   "parallel_renders": 2,
   "use_fast_whisper": true,
   "burn_captions": true,
-  "viral_threshold": 0.8,
-  "auto_publish": false
+  "viral_threshold": 0.9,
+  "auto_publish": false,
+  "ai_custom_prompt": "Use suspenseful curiosity gaps with high FOMO (e.g. \"he had no idea what was about to happen...\", \"watch till the end\"). Emphasize extreme shock and disbelief.",
+  "ai_description_template": "{summary}\n\nStreamer: {streamer}\nWatch: https://twitch.tv/{streamer}\n\n{hashtags} {title}",
+  "upload_schedule_mode": "peak_hours",
+  "upload_peak_hours": [
+    "08:00",
+    "12:00",
+    "16:00",
+    "18:00",
+    "20:00",
+    "22:00"
+  ],
+  "upload_stagger_minutes": 120
 }

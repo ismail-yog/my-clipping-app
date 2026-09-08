@@ -8,6 +8,7 @@ Usage:
     python auth_youtube.py
 """
 
+import argparse
 import sys
 import logging
 from pathlib import Path
@@ -15,20 +16,21 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-SECRETS_FILE = Path("client_secrets.json")
-TOKEN_FILE   = Path("youtube_token.json")
-SCOPES       = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+]
 
 
-def check_existing_token():
+def check_existing_token(token_file: Path):
     """Return valid creds if token exists and is usable, else None."""
-    if not TOKEN_FILE.exists():
+    if not token_file.exists():
         return None
     try:
         from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request
 
-        creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+        creds = Credentials.from_authorized_user_file(str(token_file), SCOPES)
 
         if creds.valid:
             logger.info("Token is already valid.")
@@ -37,7 +39,7 @@ def check_existing_token():
         if creds.expired and creds.refresh_token:
             logger.info("Token expired — refreshing...")
             creds.refresh(Request())
-            TOKEN_FILE.write_text(creds.to_json())
+            token_file.write_text(creds.to_json())
             logger.info("Token refreshed successfully.")
             return creds
 
@@ -55,11 +57,11 @@ def check_existing_token():
     return None
 
 
-def run_auth_flow():
+def run_auth_flow(secrets_file: Path, port: int = 8080):
     """
     Opens the system browser for Google sign-in.
     run_local_server() handles everything automatically:
-      - Picks a free port
+      - Picks or binds port
       - Opens browser
       - Waits for callback
       - Returns credentials with refresh_token
@@ -67,12 +69,12 @@ def run_auth_flow():
     from google_auth_oauthlib.flow import InstalledAppFlow
 
     logger.info("Opening browser for Google sign-in...")
-    flow = InstalledAppFlow.from_client_secrets_file(str(SECRETS_FILE), SCOPES)
+    flow = InstalledAppFlow.from_client_secrets_file(str(secrets_file), SCOPES)
 
     creds = flow.run_local_server(
-        port=8080,            # Fixed port — must have http://localhost:8080 in Google Cloud Console
+        port=port,
         access_type="offline",
-        prompt="consent",     # Force consent so refresh_token is always issued
+        prompt="consent",
         open_browser=True,
     )
 
@@ -80,30 +82,60 @@ def run_auth_flow():
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="StreamClipper YouTube OAuth Setup (Multi-Account Supported)"
+    )
+    parser.add_argument(
+        "--secrets",
+        type=str,
+        default="client_secrets.json",
+        help="Path to client_secrets JSON file (default: client_secrets.json)",
+    )
+    parser.add_argument(
+        "--token",
+        type=str,
+        default="youtube_token.json",
+        help="Path to save output token JSON (default: youtube_token.json)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Callback server port (default: 8080)",
+    )
+    args = parser.parse_args()
+
+    secrets_file = Path(args.secrets)
+    token_file = Path(args.token)
+
     print("=" * 54)
     print("  StreamClipper - YouTube Authorization Setup")
     print("=" * 54)
+    print(f"  Secrets File : {secrets_file}")
+    print(f"  Token Output : {token_file}")
+    print(f"  Local Port   : {args.port}")
+    print("=" * 54)
 
-    if not SECRETS_FILE.exists():
-        print(f"\n[ERROR] {SECRETS_FILE} not found.")
+    if not secrets_file.exists():
+        print(f"\n[ERROR] {secrets_file} not found.")
         print("    Download it from:")
         print("    Google Cloud Console > APIs & Services > Credentials")
         print("    > OAuth 2.0 Client IDs > Download JSON")
         sys.exit(1)
 
-    creds = check_existing_token()
+    creds = check_existing_token(token_file)
     if creds:
         print(f"\n[OK] Already authorized - token is valid.")
-        print(f"     File: {TOKEN_FILE.resolve()}")
-        print("     No action needed. StreamClipper is ready to upload.")
+        print(f"     File: {token_file.resolve()}")
+        print("     No action needed. Ready to upload.")
         return
 
     try:
-        creds = run_auth_flow()
+        creds = run_auth_flow(secrets_file, port=args.port)
     except Exception as e:
         print(f"\n[ERROR] Authorization failed: {e}")
         print("\n    Common fixes:")
-        print("    1. Make sure http://localhost:8080 is in your OAuth redirect URIs")
+        print(f"    1. Make sure http://localhost:{args.port} or http://localhost:{args.port}/ is in your OAuth redirect URIs")
         print("       (Google Cloud Console > Credentials > Edit > Authorized redirect URIs)")
         print("    2. Revoke the app at https://myaccount.google.com/permissions and retry")
         sys.exit(1)
@@ -115,9 +147,10 @@ def main():
     else:
         print("\n[OK] Got refresh_token - login will persist permanently.")
 
-    TOKEN_FILE.write_text(creds.to_json())
-    print(f"\n[OK] Token saved to: {TOKEN_FILE.resolve()}")
-    print("     StreamClipper will auto-refresh the token - no re-login needed.")
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(creds.to_json(), encoding="utf-8")
+    print(f"\n[OK] Token saved to: {token_file.resolve()}")
+    print("     StreamClipper will auto-refresh this token.")
 
 
 if __name__ == "__main__":

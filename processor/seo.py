@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import requests
 
 import config
+from processor.censor import censor_text
 
 logger = logging.getLogger("streamclipper.processor.seo")
 
@@ -52,7 +53,7 @@ class SEOGenerator:
                     logger.info("Requesting SEO metadata from NVIDIA NIM model: %s", n_model)
                     response = self._call_nvidia_nim(prompt, n_model)
                     if response:
-                        meta = self._parse_response(response)
+                        meta = self._parse_response(response, streamer_name=streamer_name, transcript=transcript, emotion=emotion)
                         if meta:
                             meta.generated_by = f"nvidia_nim:{n_model}"
                             return meta
@@ -64,22 +65,25 @@ class SEOGenerator:
             logger.info("Requesting SEO metadata from primary model: %s", self.model)
             response = self._call_ollama(prompt, self.model)
             if response:
-                meta = self._parse_response(response)
+                meta = self._parse_response(response, streamer_name=streamer_name, transcript=transcript, emotion=emotion)
                 if meta:
+                    meta.generated_by = f"ollama:{self.model}"
                     return meta
         except Exception as e:
             logger.warning("Primary Ollama model (%s) failed: %s", self.model, e)
 
         # 2. Try fallback Ollama model
-        try:
-            logger.info("Requesting SEO metadata from fallback model: %s", self.fallback_model)
-            response = self._call_ollama(prompt, self.fallback_model)
-            if response:
-                meta = self._parse_response(response)
-                if meta:
-                    return meta
-        except Exception as e:
-            logger.warning("Fallback Ollama model (%s) failed: %s", self.fallback_model, e)
+        if self.fallback_model and self.fallback_model != self.model:
+            try:
+                logger.info("Requesting SEO metadata from fallback model: %s", self.fallback_model)
+                response = self._call_ollama(prompt, self.fallback_model)
+                if response:
+                    meta = self._parse_response(response, streamer_name=streamer_name, transcript=transcript, emotion=emotion)
+                    if meta:
+                        meta.generated_by = f"ollama:{self.fallback_model}"
+                        return meta
+            except Exception as e:
+                logger.warning("Fallback Ollama model (%s) failed: %s", self.fallback_model, e)
 
         # 3. Fallback to static template-based generation
         logger.info("NVIDIA NIM / Ollama unavailable — falling back to template-based SEO")
@@ -129,38 +133,87 @@ class SEOGenerator:
             logger.debug("Ollama request failed for model %s: %s", model, e)
         return None
 
+    def _get_ai_settings(self) -> dict:
+        """Fetch custom prompt and description templates from settings.json."""
+        settings_file = config.BASE_DIR / "settings.json"
+        if settings_file.exists():
+            try:
+                return json.loads(settings_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.warning("Could not read settings.json for AI settings: %s", e)
+        return {}
+
     def _build_prompt(self, transcript: str, streamer_name: str, emotion: str, platform: str) -> str:
-        """Engineer viral prompt requesting JSON schema matching SEOMetadata."""
-        return f"""You are a YouTube Shorts and TikTok viral marketing expert. 
-Generate metadata for a highlight clip using these details:
-- Streamer Name: {streamer_name}
-- Stream Platform: {platform}
-- Dominant Emotion: {emotion or 'exciting'}
-- Transcript: "{transcript[:500]}"
+        """Engineer viral Gen-Z short-form prompt requesting JSON schema matching SEOMetadata."""
+        ai_cfg = self._get_ai_settings()
+        custom_prompt = ai_cfg.get("ai_custom_prompt", "").strip()
+        desc_template = ai_cfg.get("ai_description_template", "").strip()
 
-You must generate optimized metadata using viral clickbait formulas, such as:
-1. "INSANE {{action}} by {streamer_name}!"
-2. "{streamer_name} just {{action}} and chat went WILD"
-3. "This is the funniest moment EVER"
-
-Your output MUST be a single raw JSON object matching the schema below. Do not include markdown blocks (like ```json), introduction, or commentary.
-
-JSON Output Schema:
-{{
-  "title": "A clickbait title under 80 characters (with 1-2 emojis, e.g., 'INSANE clutch by {streamer_name}! 😱')",
-  "description": "A 2-sentence description containing the streamer name, summary of what happened, and 5 viral hashtags.",
-  "tags": ["array", "of", "5-8", "short", "lowercase", "keywords", "including", "streamer", "name"],
-  "hook_text": "Irresistible 3-second opening text overlay (under 30 characters, e.g. 'HE DID WHAT?!')",
-  "thumbnail_prompt": "Punchy 1-2 word text overlay for the thumbnail (e.g. 'UNBELIEVABLE')"
-}}
-
-Constraints:
-- title length <= 80 characters
-- hook_text length <= 30 characters
-- tags list size must be between 5 and 8 elements
+        custom_prompt_section = ""
+        if custom_prompt:
+            custom_prompt_section = f"""
+Additional Custom Creator Directives & Persona:
+{custom_prompt}
+(CRITICAL: Adhere to the custom creator directives above while preserving the JSON output schema.)
 """
 
-    def _parse_response(self, response: str) -> Optional[SEOMetadata]:
+        desc_instruction = "2-sentence summary of the moment with 5 viral TikTok hashtags #fyp #streamer #gaming #viral #clutch"
+        if desc_template:
+            desc_instruction = f"Format description conforming to this template: {desc_template}"
+
+        return f"""You are a top-tier TikTok / YouTube Shorts viral clip editor specializing in Gen-Z retention formulas.
+Generate metadata for a short-form video clip using these details:
+- Streamer / Creator: {streamer_name}
+- Dominant Emotion: {emotion or 'hype'}
+- Speech Transcript: "{transcript[:600]}"
+{custom_prompt_section}
+Rules for Title & Hook:
+1. Use authentic Gen-Z / TikTok phrasing (lowercase lowercase or lowercase with emojis: e.g. "bro thought he was him 💀", "ain't no way he said that 😭", "nah chat is cooking him rn", "he really sold the bag 💀").
+2. Reference what was actually spoken in the transcript in quotes when applicable (e.g. bro really said "..." 💀).
+3. NEVER use generic 2012 words like "EPIC MELTDOWN", "MIND BLOWN", "UNBELIEVABLE", "CRAZY REACTION". Keep it raw, hilarious, and punchy.
+
+Output MUST be a single raw JSON object matching the schema below:
+{{
+  "title": "Viral Gen-Z title under 75 chars with 1 emoji (e.g. bro thought he was him 💀)",
+  "description": "{desc_instruction}",
+  "tags": ["{streamer_name.lower()}", "gaming", "streamer", "viral", "fyp", "shorts", "tiktok"],
+  "hook_text": "High-retention streamer headline hook between 40-80 chars with 1-2 emojis (e.g. {streamer_name} was HYPED that DDG is back on YT but says he isn't DUB 😭💀)",
+  "thumbnail_prompt": "1-2 punchy words (e.g. NO WAY)"
+}}
+"""
+
+    def _format_description_template(
+        self,
+        template: str,
+        streamer_name: str,
+        title: str,
+        summary: str,
+        tags: list[str],
+        emotion: str,
+        transcript: str
+    ) -> str:
+        """Hydrate description template placeholders."""
+        tags_hash = " ".join([f"#{t.replace(' ', '')}" for t in tags[:5]]) if tags else "#Shorts #gaming #viral"
+        rendered = template
+        replacements = {
+            "{streamer}": streamer_name,
+            "{title}": title,
+            "{summary}": summary or title,
+            "{hashtags}": tags_hash,
+            "{emotion}": emotion or "hype",
+            "{transcript}": transcript[:250],
+        }
+        for k, v in replacements.items():
+            rendered = rendered.replace(k, v)
+        return rendered.strip()
+
+    def _parse_response(
+        self,
+        response: str,
+        streamer_name: str = "",
+        transcript: str = "",
+        emotion: str = ""
+    ) -> Optional[SEOMetadata]:
         """Robustly parse JSON object from LLM generation response string."""
         import re
         try:
@@ -208,15 +261,30 @@ Constraints:
                 title = data.get("title", "")[:80]
                 description = data.get("description", "")
                 tags = [str(t).lower() for t in data.get("tags", [])][:8]
-                hook_text = data.get("hook_text", "")[:30]
+                hook_text = data.get("hook_text", "")[:85]
                 thumbnail_prompt = data.get("thumbnail_prompt", "")[:30]
+
+                # Check if custom description template is active and hydrate if placeholders present
+                ai_cfg = self._get_ai_settings()
+                desc_template = ai_cfg.get("ai_description_template", "").strip()
+                if desc_template and ("{" in desc_template and "}" in desc_template):
+                    summary = description.split("\n")[0] if description else title
+                    description = self._format_description_template(
+                        template=desc_template,
+                        streamer_name=streamer_name,
+                        title=title,
+                        summary=summary,
+                        tags=tags,
+                        emotion=emotion,
+                        transcript=transcript
+                    )
                 
                 return SEOMetadata(
-                    title=title,
-                    description=description,
+                    title=censor_text(title),
+                    description=censor_text(description),
                     tags=tags,
-                    hook_text=hook_text,
-                    thumbnail_prompt=thumbnail_prompt,
+                    hook_text=censor_text(hook_text),
+                    thumbnail_prompt=censor_text(thumbnail_prompt),
                     generated_by="nvidia_nim"
                 )
         except Exception as e:
@@ -224,19 +292,73 @@ Constraints:
         return None
 
     def _template_generate(self, transcript: str, streamer_name: str, emotion: str) -> SEOMetadata:
-        """Static template generator used as fallback if Ollama model calls fail."""
-        emo_str = emotion or "epic"
-        title = f"{emo_str.upper()} moment from {streamer_name}!"
-        description = transcript[:200] + "..." if transcript else f"Epic highlight moment featuring {streamer_name}!"
-        tags = [streamer_name.lower(), "twitch", "funny", "viral", "clip", emo_str.lower(), "highlights", "gaming"]
-        hook_text = "WATCH THIS 👀"
-        thumbnail_prompt = f"{streamer_name} REACTS"
+        """Authentic Gen-Z title and metadata generator when LLM is unavailable."""
+        import random
+        words = [w for w in transcript.strip().split() if w]
+        snippet = " ".join(words[:6]).strip('",.?!')
+        streamer_display = streamer_name or "Bro"
+        
+        if len(words) >= 3 and len(snippet) > 6:
+            snip_lower = snippet.lower()
+            snip_upper = snippet.upper()
+            if "i " in snip_lower or "my " in snip_lower or "me " in snip_lower:
+                title = f"bro really said \"{snip_lower}\" 💀"
+            elif emotion in ("surprise", "fear"):
+                title = f"ain't no way {snip_lower} 😭"
+            elif emotion in ("anger", "rage"):
+                title = f"nah he actually lost it over this 💀"
+            elif emotion in ("joy", "win"):
+                title = f"bro thought he was him 👑"
+            else:
+                title = f"wait till the end... \"{snip_lower}\" 💀"
+
+            hook_options = [
+                f"{streamer_display} was HYPED that {snip_upper} but chat said NO 😭💀",
+                f"NO SHOT {streamer_display} REALLY SAID \"{snip_upper}\" 💀🔥",
+                f"chat is COOKING {streamer_display} over this 😭💀",
+                f"{streamer_display} CAUGHT IN 4K SAYING THIS 😭💀",
+            ]
+        else:
+            fallbacks = [
+                f"bro thought he was him 💀",
+                f"ain't no way {streamer_display} did this 😭",
+                f"nah chat is cooking him rn 💀",
+                f"bro sold the bag so fast 😭",
+                f"he was NOT ready for this 💀",
+                f"wait till the ending bro i'm crying 😭",
+            ]
+            title = random.choice(fallbacks)
+            hook_options = [
+                f"{streamer_display} was HYPED on stream but chat wasn't having it 😭💀",
+                f"NO SHOT {streamer_display} REALLY SAID THIS ON STREAM 💀🔥",
+                f"chat is COOKING {streamer_display} right now 😭💀",
+                f"BRO REALLY THOUGHT HE WAS HIM 😭💀",
+            ]
+
+        hook_text = random.choice(hook_options)
+        tags = [streamer_name.lower(), "fyp", "shorts", "viral", "tiktok", "gaming", "funny"]
+        thumbnail_prompt = "NO WAY"
+
+        ai_cfg = self._get_ai_settings()
+        desc_template = ai_cfg.get("ai_description_template", "").strip()
+        if desc_template and ("{" in desc_template and "}" in desc_template):
+            description = self._format_description_template(
+                template=desc_template,
+                streamer_name=streamer_name,
+                title=title,
+                summary=title,
+                tags=tags,
+                emotion=emotion,
+                transcript=transcript
+            )
+        else:
+            description = f"{title}\n\nClip from {streamer_name}. #fyp #shorts #viral #gaming #twitch"
 
         return SEOMetadata(
-            title=title[:80],
-            description=description,
+            title=censor_text(title[:80]),
+            description=censor_text(description),
             tags=tags,
-            hook_text=hook_text[:30],
-            thumbnail_prompt=thumbnail_prompt[:30],
-            generated_by="template"
+            hook_text=censor_text(hook_text[:85]),
+            thumbnail_prompt=censor_text(thumbnail_prompt[:30]),
+            generated_by="genz_template"
         )

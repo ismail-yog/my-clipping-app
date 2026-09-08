@@ -22,6 +22,7 @@ from processor.subprocess_utils import (
     SubprocessExecutionError,
     MediaProcessingError,
 )
+from processor.captions_engine import CaptionsEngine, SubtitleStyle, normalize_subtitle_style
 
 logger = logging.getLogger("streamclipper.processor.clipper")
 
@@ -58,6 +59,7 @@ class Clipper:
 
     def __init__(self, settings: Optional[config.ClipSettings] = None):
         self.settings = settings or config.clip_settings
+        self.captions_engine = CaptionsEngine()
         self._clips: List[ClipMetadata] = []
 
     def create_clip(
@@ -71,11 +73,20 @@ class Clipper:
         emotion: str = "",
         custom_clip_id: Optional[str] = None,
         layout_type: str = "gamer",
+        subtitle_style: Union[SubtitleStyle, str] = SubtitleStyle.GLACIER_GLOW,
     ) -> Optional[ClipMetadata]:
         """
         Create a processed clip from source video.
         Uses exact millisecond offsets and CFR conversion.
+        Strictly rejects and dumps any clip with moment_score < 0.65.
         """
+        if moment_score < 0.65:
+            logger.info(
+                "🗑️ Dropping clip immediately: moment_score=%.2f < 0.65 (65%%) viral threshold",
+                moment_score,
+            )
+            return None
+
         streamer_name = streamer.name if streamer else "vod"
         clip_id = custom_clip_id or f"{streamer_name}_{int(time.time())}"
         output_path = config.CLIPS_DIR / f"{clip_id}.mp4"
@@ -84,8 +95,8 @@ class Clipper:
         duration_ms = seconds_to_ms(duration)
 
         logger.info(
-            "Creating clip: %s (duration_ms=%d, start_offset_ms=%d)",
-            clip_id, duration_ms, start_offset_ms,
+            "Creating clip: %s (score=%.2f, duration_ms=%d, start_offset_ms=%d)",
+            clip_id, moment_score, duration_ms, start_offset_ms,
         )
 
         temp_cut = config.CLIPS_DIR / f"{clip_id}_temp_cut.mp4"
@@ -114,11 +125,21 @@ class Clipper:
                 logger.error("FFmpeg cut produced empty or missing file for %s", clip_id)
                 return None
 
-            # Step 2: Reframe to 9:16 (1080x1920)
+            # Step 2: Reframe using SmartCrop (white_canvas, gamer, speaker, center, etc.)
+            from processor.smart_crop import SmartCrop
+            smart_crop = SmartCrop()
+            crop_filter = smart_crop.get_crop_filter(
+                video_path=temp_cut,
+                start_sec=0.0,
+                target_width=self.settings.output_width,
+                target_height=self.settings.output_height,
+                layout_type=layout_type,
+                duration=float(duration_ms / 1000.0),
+            )
             reframe_cmd = [
                 "ffmpeg", "-y",
                 "-i", str(temp_cut),
-                "-vf", f"scale={self.settings.output_width}:{self.settings.output_height}:force_original_aspect_ratio=increase,crop={self.settings.output_width}:{self.settings.output_height},fps=fps=60",
+                "-vf", f"{crop_filter},fps=fps=60",
                 "-c:v", self.settings.video_codec,
                 "-preset", "medium",
                 "-crf", str(self.settings.crf),
@@ -139,7 +160,14 @@ class Clipper:
             burn_enabled = getattr(config.vod_settings, "burn_captions", True)
 
             if transcript_segments and burn_enabled:
-                ass_path = self._generate_ass_captions(clip_id, transcript_segments, base_offset_ms=start_offset_ms)
+                style_enum = normalize_subtitle_style(subtitle_style)
+                ass_path = self._generate_ass_captions(
+                    clip_id,
+                    transcript_segments,
+                    base_offset_ms=start_offset_ms,
+                    style=style_enum,
+                    layout_type=layout_type,
+                )
                 if ass_path:
                     captioned_path = self._burn_captions(output_path, ass_path)
                     if captioned_path:
@@ -190,103 +218,38 @@ class Clipper:
         clip_id: str,
         transcript_segments: list,
         base_offset_ms: int = 0,
+        style: SubtitleStyle = SubtitleStyle.GLACIER_GLOW,
+        layout_type: str = "white_canvas",
     ) -> Optional[Path]:
-        """Generate a .ass subtitle file with word-by-word highlighting and pop-in animation."""
-        s = self.settings
-        ass_path = config.CLIPS_DIR / f"{clip_id}.ass"
-
-        header = f"""[Script Info]
-Title: {clip_id}
-ScriptType: v4.00+
-PlayResX: {s.output_width}
-PlayResY: {s.output_height}
-WrapStyle: 0
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,30,30,220,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-        lines = [header]
-
-        # Flatten all words
-        all_words = []
-        for seg in transcript_segments:
-            if hasattr(seg, "words") and seg.words:
-                all_words.extend(seg.words)
-            elif isinstance(seg, dict) and "words" in seg:
-                all_words.extend(seg["words"])
-
-        # Group words into chunks
-        chunks = []
-        current_chunk = []
-        for w in all_words:
-            w_word = getattr(w, "word", None) or (w.get("word", "") if isinstance(w, dict) else "")
-            w_start_sec = getattr(w, "start", None) if hasattr(w, "start") else (w.get("start", 0.0) if isinstance(w, dict) else 0.0)
-            w_end_sec = getattr(w, "end", None) if hasattr(w, "end") else (w.get("end", 0.0) if isinstance(w, dict) else 0.0)
-            w_prob = getattr(w, "probability", 1.0) if hasattr(w, "probability") else (w.get("probability", 1.0) if isinstance(w, dict) else 1.0)
-
-            w_start_ms = max(0, seconds_to_ms(w_start_sec) - base_offset_ms)
-            w_end_ms = max(w_start_ms + 10, seconds_to_ms(w_end_sec) - base_offset_ms)
-
-            w_dict = {"word": w_word, "start_ms": w_start_ms, "end_ms": w_end_ms, "prob": w_prob}
-
-            if current_chunk and (w_dict["start_ms"] - current_chunk[-1]["end_ms"] > 1500 or len(current_chunk) >= 4):
-                chunks.append(current_chunk)
-                current_chunk = []
-            current_chunk.append(w_dict)
-
-        if current_chunk:
-            chunks.append(current_chunk)
-
-        if chunks:
-            for chunk in chunks:
-                for i, active_word in enumerate(chunk):
-                    start_ts = ms_to_ass_timestamp(active_word["start_ms"])
-                    end_ts = ms_to_ass_timestamp(active_word["end_ms"])
-
-                    text_parts = []
-                    for j, w in enumerate(chunk):
-                        word_str = str(w["word"]).strip().upper()
-                        if j == i:
-                            text_parts.append(f"{{\\b1\\fscx115\\fscy115\\3c&H00FFFF&}}{word_str}{{\\r}}")
-                        else:
-                            text_parts.append(word_str)
-
-                    full_text = " ".join(text_parts)
-                    lines.append(f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{full_text}")
-        else:
-            for seg in transcript_segments:
-                seg_text = getattr(seg, "text", "") if hasattr(seg, "text") else (seg.get("text", "") if isinstance(seg, dict) else "")
-                seg_start_sec = getattr(seg, "start", 0.0) if hasattr(seg, "start") else (seg.get("start", 0.0) if isinstance(seg, dict) else 0.0)
-                seg_end_sec = getattr(seg, "end", 0.0) if hasattr(seg, "end") else (seg.get("end", 0.0) if isinstance(seg, dict) else 0.0)
-
-                start_ms = max(0, seconds_to_ms(seg_start_sec) - base_offset_ms)
-                end_ms = max(start_ms + 10, seconds_to_ms(seg_end_sec) - base_offset_ms)
-
-                start_ts = ms_to_ass_timestamp(start_ms)
-                end_ts = ms_to_ass_timestamp(end_ms)
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{seg_text}")
-
+        """Generate a .ass subtitle file with word-by-word highlighting and pop-in animation using CaptionsEngine."""
         try:
-            with open(ass_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
-            return ass_path
+            ass_path = config.CLIPS_DIR / f"{clip_id}.ass"
+            return self.captions_engine.generate_ass(
+                clip_id=clip_id,
+                transcript_segments=transcript_segments,
+                output_path=ass_path,
+                style=style,
+                base_offset_ms=base_offset_ms,
+                layout_type=layout_type,
+            )
         except Exception as e:
-            logger.error("Failed to write ASS file: %s", e)
+            logger.error("Failed to generate ASS subtitles via CaptionsEngine: %s", e)
             return None
 
     def _burn_captions(self, video_path: Path, ass_path: Path) -> Optional[Path]:
-        """Burn ASS subtitles into the video using ffmpeg."""
         output_captioned = video_path.parent / f"{video_path.stem}_captioned.mp4"
-        ass_filter_path = str(ass_path.absolute()).replace("\\", "/").replace(":", "\\:")
+        # Windows-safe path formatting for libavfilter ass filter
+        try:
+            rel_path = str(ass_path.relative_to(Path.cwd())).replace("\\", "/")
+            ass_filter = f"ass='{rel_path}'"
+        except Exception:
+            abs_escaped = str(ass_path.absolute()).replace("\\", "/").replace(":", "\\:")
+            ass_filter = f"ass=filename='{abs_escaped}'"
 
         burn_cmd = [
             "ffmpeg", "-y",
             "-i", str(video_path),
-            "-vf", f"ass='{ass_filter_path}'",
+            "-vf", ass_filter,
             "-c:v", self.settings.video_codec,
             "-crf", str(self.settings.crf),
             "-c:a", "copy",

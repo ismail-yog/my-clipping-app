@@ -1,4 +1,9 @@
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws/events";
+const getWsUrl = () => {
+  if (typeof window !== "undefined") {
+    return `ws://${window.location.hostname}:8000/ws/events`;
+  }
+  return process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws/events";
+};
 
 export type StatusUpdate = {
   type: string;
@@ -14,7 +19,7 @@ export type StatusUpdate = {
 export function connectWebSocket(onMessage: (data: StatusUpdate) => void): WebSocket | null {
   if (typeof window === "undefined") return null;
 
-  const ws = new WebSocket(WS_URL);
+  const ws = new WebSocket(getWsUrl());
 
   ws.onmessage = (event) => {
     try {

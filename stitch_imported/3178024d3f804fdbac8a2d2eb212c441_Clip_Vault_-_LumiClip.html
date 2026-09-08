@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+
+<html lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><style>@layer base{html,body{margin:0;padding:0;background-color:#111319;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}.ambient-bg{position:fixed;top:0;left:0;right:0;bottom:0;z-index:-1;background:radial-gradient(circle at 20% 30%,rgba(192,193,255,0.05) 0%,transparent 40%),radial-gradient(circle at 80% 70%,rgba(247,81,161,0.05) 0%,transparent 40%);background-color:#111319;}.cyber-grid{position:fixed;top:0;left:0;right:0;bottom:0;z-index:-1;background-image:linear-gradient(rgba(255,255,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.02) 1px,transparent 1px);background-size:40px 40px;}.pulse-green{box-shadow:0 0 0 0 rgba(16,185,129,0.7);animation:pulse 2s infinite;}@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(16,185,129,0.7);}70%{box-shadow:0 0 0 10px rgba(16,185,129,0);}100%{box-shadow:0 0 0 0 rgba(16,185,129,0);}}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{"colors":{"secondary-fixed-dim":"#ddb7ff","surface-dim":"#111319","on-surface":"#e2e2ea","on-primary-fixed-variant":"#2f2ebe","surface-container-low":"#191c21","tertiary":"#ffb0cd","secondary-fixed":"#f0dbff","on-tertiary-container":"#570032","on-error-container":"#ffdad6","primary-container":"#8083ff","outline":"#908fa0","error":"#ffb4ab","on-tertiary-fixed-variant":"#8c0053","on-primary-container":"#0d0096","error-container":"#93000a","surface-container-lowest":"#0c0e13","on-tertiary-fixed":"#3e0022","outline-variant":"#464554","primary-fixed-dim":"#c0c1ff","on-secondary-container":"#d6a9ff","on-primary-fixed":"#07006c","primary-fixed":"#e1e0ff","secondary-container":"#6f00be","surface-bright":"#37393f","on-secondary-fixed":"#2c0051","surface-variant":"#33353b","inverse-primary":"#494bd6","inverse-surface":"#e2e2ea","secondary":"#ddb7ff","background":"#111319","on-secondary":"#490080","inverse-on-surface":"#2e3036","surface-container":"#1d2025","on-error":"#690005","primary":"#c0c1ff","tertiary-fixed-dim":"#ffb0cd","surface-container-high":"#282a30","surface":"#111319","tertiary-fixed":"#ffd9e4","on-tertiary":"#640039","surface-tint":"#c0c1ff","on-secondary-fixed-variant":"#6900b3","on-surface-variant":"#c7c4d7","on-background":"#e2e2ea","tertiary-container":"#f751a1","on-primary":"#1000a9","surface-container-highest":"#33353b"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"gutter":"20px","sm":"8px","xs":"4px","margin-desktop":"64px","md":"16px","unit":"4px","lg":"24px","margin-mobile":"16px","xl":"48px"},"fontFamily":{"body-lg":["Geist"],"label-mono":["JetBrains Mono"],"headline-lg":["Geist"],"headline-lg-mobile":["Geist"],"label-code":["JetBrains Mono"],"headline-md":["Geist"],"body-md":["Geist"],"headline-xl":["Geist"],"body-sm":["Geist"]},"fontSize":{"body-lg":["18px",{"lineHeight":"28px","fontWeight":"400"}],"label-mono":["13px",{"lineHeight":"16px","letterSpacing":"0.05em","fontWeight":"500"}],"headline-lg":["32px",{"lineHeight":"40px","letterSpacing":"-0.01em","fontWeight":"600"}],"headline-lg-mobile":["28px",{"lineHeight":"34px","fontWeight":"700"}],"label-code":["11px",{"lineHeight":"14px","fontWeight":"400"}],"headline-md":["24px",{"lineHeight":"32px","fontWeight":"600"}],"body-md":["16px",{"lineHeight":"24px","fontWeight":"400"}],"headline-xl":["48px",{"lineHeight":"56px","letterSpacing":"-0.02em","fontWeight":"700"}],"body-sm":["14px",{"lineHeight":"20px","fontWeight":"400"}]}}}}</script><link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;700&amp;family=Jetbrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&amp;family=JetBrains+Mono:wght@100..900&amp;display=swap" rel="stylesheet"/></head><body class="bg-background font-body-md text-on-background"><div class="ambient-bg"></div><div class="cyber-grid"></div><aside class="fixed left-0 top-0 h-full w-[280px] bg-white/[0.03] backdrop-blur-xl border-r border-white/[0.08] z-50 flex flex-col pt-lg pb-lg transition-all duration-300"><div class="px-lg mb-xl flex items-center gap-sm"><div class="w-10 h-10 bg-gradient-to-tr from-primary to-tertiary rounded-lg flex items-center justify-center"><span class="material-symbols-outlined text-on-primary">bolt</span></div><span class="font-headline-md text-headline-md text-on-surface tracking-tight">LumiClip</span></div><nav class="flex-1 px-md space-y-xs" data-active-classes="bg-primary-container text-on-primary-container font-semibold"><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="dashboard" href="#"><span class="material-symbols-outlined">dashboard</span>Dashboard</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="clip-studio" href="#"><span class="material-symbols-outlined">movie_edit</span>Clip Studio</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="streamers" href="#"><span class="material-symbols-outlined">sensors</span>Streamers</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="pipeline" href="#"><span class="material-symbols-outlined">account_tree</span>Pipeline</a><a aria-current="page" class="flex items-center px-md py-sm rounded-lg transition-all gap-md bg-primary-container text-on-primary-container font-semibold" data-path="clip-vault" href="#"><span class="material-symbols-outlined">inventory_2</span>Clip Vault</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="distribution" href="#"><span class="material-symbols-outlined">cloud_upload</span>Distribution</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="settings" href="#"><span class="material-symbols-outlined">settings</span>Settings</a></nav><div class="px-lg pt-lg border-t border-white/[0.08]"><div class="bg-black/20 rounded-xl p-md border border-white/[0.05]"><div class="flex items-center justify-between mb-xs"><span class="text-label-mono font-label-mono text-on-surface-variant">GPU VRAM</span><span class="text-label-mono font-label-mono text-primary">16GB</span></div><div class="w-full h-1 bg-surface-container-highest rounded-full overflow-hidden"><div class="w-3/4 h-full bg-gradient-to-r from-primary to-secondary"></div></div><div class="mt-sm flex items-center gap-xs"><span class="w-2 h-2 rounded-full bg-secondary-fixed pulse-green"></span><span class="text-label-code font-label-code text-on-surface-variant uppercase">CFR 60fps Stable</span></div></div></div></aside><div class="pl-[280px]"><header class="fixed top-0 left-[280px] right-0 h-16 bg-surface/40 backdrop-blur-xl border-b border-white/[0.08] z-40 flex items-center justify-between px-lg"><div class="flex items-center gap-md"><div class="px-sm py-xs bg-black/20 rounded-full border border-white/10 flex items-center gap-xs"><span class="w-1.5 h-1.5 rounded-full bg-green-500 pulse-green"></span></div></div><div class="flex items-center gap-lg"><div class="relative flex items-center justify-center p-sm rounded-full hover:bg-white/10 cursor-pointer transition-colors text-on-surface-variant hover:text-on-surface"><span class="material-symbols-outlined">notifications</span><span class="absolute top-2 right-2 w-2 h-2 bg-tertiary rounded-full border border-surface"></span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center cursor-pointer hover:ring-2 ring-primary/40 transition-all"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></header><main class="relative pt-16 min-h-screen"><div class="flex flex-col w-full relative">
+<!-- Header / Stats Area -->
+<div class="mb-xl relative">
+<div class="absolute inset-0 bg-gradient-to-r from-primary/10 to-tertiary/10 blur-[80px] pointer-events-none"></div>
+<div class="relative flex flex-col md:flex-row gap-lg justify-between items-end bg-surface-container-low/50 backdrop-blur-xl p-lg rounded-xl border border-white/[0.08]">
+<div class="flex-1">
+<h1 class="font-headline-xl text-headline-xl text-on-surface mb-xs tracking-tight">Clip Vault</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">Manage and review your AI-generated clips before distribution. High viral score clips are prioritized.</p>
+</div>
+<div class="flex gap-md">
+<div class="bg-surface-container/80 p-md rounded-lg border border-white/[0.05] flex flex-col items-end min-w-[140px]">
+<span class="font-label-mono text-label-mono text-on-surface-variant uppercase mb-xs">Ready for Review</span>
+<span class="font-headline-lg text-headline-lg text-tertiary">24</span>
+</div>
+<div class="bg-surface-container/80 p-md rounded-lg border border-white/[0.05] flex flex-col items-end min-w-[140px]">
+<span class="font-label-mono text-label-mono text-on-surface-variant uppercase mb-xs">Auto-Approved</span>
+<span class="font-headline-lg text-headline-lg text-primary">128</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Filter Bar -->
+<div class="flex flex-col md:flex-row gap-md justify-between items-center mb-lg sticky top-16 z-30 bg-surface/80 backdrop-blur-md py-sm">
+<div class="flex flex-wrap gap-xs">
+<button class="px-md py-sm rounded-full bg-primary text-on-primary font-label-mono text-label-mono uppercase transition-all hover:brightness-110">All Clips</button>
+<button class="px-md py-sm rounded-full bg-surface-container-high border border-white/[0.08] text-on-surface font-label-mono text-label-mono uppercase hover:bg-white/5 transition-all">Pending Review</button>
+<button class="px-md py-sm rounded-full bg-surface-container-high border border-white/[0.08] text-on-surface font-label-mono text-label-mono uppercase hover:bg-white/5 transition-all">Approved</button>
+<button class="px-md py-sm rounded-full bg-surface-container-high border border-white/[0.08] text-on-surface font-label-mono text-label-mono uppercase hover:bg-white/5 transition-all">Rejected</button>
+<button class="px-md py-sm rounded-full bg-surface-container-high border border-white/[0.08] text-on-surface font-label-mono text-label-mono uppercase hover:bg-white/5 transition-all">Uploaded</button>
+</div>
+<div class="flex gap-sm w-full md:w-auto">
+<div class="relative flex-1 md:w-64">
+<span class="material-symbols-outlined absolute left-sm top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+<input class="w-full bg-black/20 border border-white/10 rounded-lg py-sm pl-xl pr-md text-on-surface font-body-md focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 transition-all placeholder:text-on-surface-variant/50" placeholder="Search clips..." type="text"/>
+</div>
+<button class="p-sm bg-surface-container-high rounded-lg border border-white/[0.08] text-on-surface hover:bg-white/10 transition-all flex items-center justify-center">
+<span class="material-symbols-outlined">filter_list</span>
+</button>
+</div>
+</div>
+<!-- Clip Grid -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-md">
+<!-- Clip Card 1 (High Score) -->
+<div class="group relative bg-surface-container/40 backdrop-blur-md rounded-xl overflow-hidden border border-white/[0.08] hover:border-primary/50 transition-all duration-300">
+<!-- Thumbnail Area (9:16 aspect ratio container) -->
+<div class="relative aspect-[9/16] bg-black overflow-hidden">
+<div class="absolute inset-0 bg-cover bg-center group-hover:scale-105 transition-transform duration-700" data-alt="A highly dynamic, neon-lit gaming moment from a first-person shooter. Vibrant pink and cyan energy blasts fill the screen. The scene is sharp, high contrast, and perfectly captures an intense, viral-worthy reaction moment." style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuACJHYqLz6ZouYkBOTMdLCokaepyq54n6Wm1-HErwZ_BCaYrMxXvw8hbImWCbr5GLQb9E1qsNFwYNWik5AhV2zg9mXyi5sv_oFtMeFVXkyyT-bbBwZEQel__bQieuS6VG9Xiu9haZE4FiAm30OKiHFu1gpcV3L50MGaTI5lxXkuPD0SLHVeqCOKXgxfAQw1eAAJC43KS7wTcLeHhdHtvbz0yyEeQTwUgtq6nBh5zaHbtzIxOd4DdSZi8w");'></div>
+<!-- Scrim for readability -->
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-black/40"></div>
+<!-- Badges Top -->
+<div class="absolute top-sm left-sm right-sm flex justify-between items-start">
+<div class="flex gap-xs">
+<span class="px-2 py-1 bg-black/60 backdrop-blur-md rounded border border-white/10 font-label-code text-label-code text-primary uppercase">CFR 60fps</span>
+<span class="px-2 py-1 bg-tertiary/20 backdrop-blur-md rounded border border-tertiary/30 font-label-code text-label-code text-tertiary uppercase">Pending</span>
+</div>
+<button class="w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-on-surface hover:text-tertiary transition-colors border border-white/10">
+<span class="material-symbols-outlined text-[18px]">more_vert</span>
+</button>
+</div>
+<!-- Viral Score Gauge Overlay -->
+<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
+<!-- SVG Circle Gauge -->
+<div class="relative w-20 h-20">
+<svg class="w-full h-full transform -rotate-90" viewbox="0 0 100 100">
+<circle cx="50" cy="50" fill="none" r="40" stroke="rgba(255,255,255,0.1)" stroke-width="8"></circle>
+<circle class="text-tertiary shadow-[0_0_15px_currentColor]" cx="50" cy="50" fill="none" r="40" stroke="currentColor" stroke-dasharray="251.2" stroke-dashoffset="30" stroke-width="8"></circle>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center text-on-surface">
+<span class="font-headline-md text-headline-md leading-none text-tertiary">92</span>
+<span class="font-label-code text-label-code text-on-surface-variant mt-1">%</span>
+</div>
+</div>
+<span class="font-label-mono text-label-mono text-white/80 uppercase tracking-widest mt-2 bg-black/40 px-2 py-1 rounded backdrop-blur-sm">Viral Score</span>
+</div>
+<!-- Info Bottom -->
+<div class="absolute bottom-sm left-sm right-sm">
+<div class="flex gap-xs mb-xs flex-wrap">
+<span class="px-2 py-0.5 bg-secondary-container/40 border border-secondary/30 rounded font-label-code text-label-code text-on-secondary-container">#Excitement</span>
+<span class="px-2 py-0.5 bg-primary-container/40 border border-primary/30 rounded font-label-code text-label-code text-on-primary-container">#Clutch</span>
+</div>
+<div class="flex justify-between items-end">
+<div>
+<h3 class="font-body-md text-body-md text-white font-medium truncate max-w-[140px]">Insane 1v5 Clutch Win</h3>
+<p class="font-label-mono text-label-mono text-white/60">0:45 â¢ Stream_A</p>
+</div>
+</div>
+</div>
+<!-- Hover Action Overlay -->
+<div class="absolute inset-0 bg-surface-dim/80 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-sm p-md">
+<button class="w-full py-2 bg-primary text-on-primary rounded-lg font-label-mono text-label-mono uppercase hover:brightness-110 flex items-center justify-center gap-xs transition-all">
+<span class="material-symbols-outlined text-[18px]">movie_edit</span> Studio Editor
+           </button>
+<div class="flex gap-sm w-full">
+<button class="flex-1 py-2 bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg font-label-mono text-label-mono uppercase hover:bg-green-500/30 transition-all flex items-center justify-center gap-xs">
+<span class="material-symbols-outlined text-[18px]">check</span> Approve
+             </button>
+<button class="flex-1 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg font-label-mono text-label-mono uppercase hover:bg-red-500/30 transition-all flex items-center justify-center gap-xs">
+<span class="material-symbols-outlined text-[18px]">close</span> Reject
+             </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Clip Card 2 -->
+<div class="group relative bg-surface-container/40 backdrop-blur-md rounded-xl overflow-hidden border border-white/[0.08] hover:border-primary/50 transition-all duration-300">
+<div class="relative aspect-[9/16] bg-black overflow-hidden">
+<div class="absolute inset-0 bg-cover bg-center group-hover:scale-105 transition-transform duration-700" data-alt="A funny reaction face of a streamer bathed in purple monitor glow. They are laughing hysterically, head thrown back. The background features blurred neon signs and acoustic foam panels." style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBPhawO68-es35wMCa7TYBowUyIzpIgN_UAFucQIbDWZCyvUcKfOYWmne6_AhRlptjV-NBOPs-7ZGMsezDAPKMqBjO-cihdzBVpyzb8IumzSd_ABu_AkW4zUSPlTfJRUn6WM-VmnECXG9NrmpGnuKtzY3ksK3xvbBWEEQzujdNU4ZL9BqrNBCMAz7P5nkJvMxtOqI9bp8FpHHuOCb_dTarzV5MDFzK_EVvlNQrC9Yk3QVf7BER-gxudJA");'></div>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-black/40"></div>
+<div class="absolute top-sm left-sm right-sm flex justify-between items-start">
+<div class="flex gap-xs">
+<span class="px-2 py-1 bg-black/60 backdrop-blur-md rounded border border-white/10 font-label-code text-label-code text-primary uppercase">CFR 60fps</span>
+<span class="px-2 py-1 bg-green-500/20 backdrop-blur-md rounded border border-green-500/30 font-label-code text-label-code text-green-400 uppercase">Approved</span>
+</div>
+</div>
+<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
+<div class="relative w-20 h-20">
+<svg class="w-full h-full transform -rotate-90" viewbox="0 0 100 100">
+<circle cx="50" cy="50" fill="none" r="40" stroke="rgba(255,255,255,0.1)" stroke-width="8"></circle>
+<circle class="text-primary shadow-[0_0_15px_currentColor]" cx="50" cy="50" fill="none" r="40" stroke="currentColor" stroke-dasharray="251.2" stroke-dashoffset="75" stroke-width="8"></circle>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center text-on-surface">
+<span class="font-headline-md text-headline-md leading-none text-primary">78</span>
+</div>
+</div>
+</div>
+<div class="absolute bottom-sm left-sm right-sm">
+<div class="flex gap-xs mb-xs flex-wrap">
+<span class="px-2 py-0.5 bg-yellow-500/20 border border-yellow-500/30 rounded font-label-code text-label-code text-yellow-300">#Humor</span>
+</div>
+<div>
+<h3 class="font-body-md text-body-md text-white font-medium truncate max-w-[140px]">Jumpscare Reaction</h3>
+<p class="font-label-mono text-label-mono text-white/60">0:32 â¢ Stream_B</p>
+</div>
+</div>
+<!-- Hover Action Overlay (Approved state - different actions) -->
+<div class="absolute inset-0 bg-surface-dim/90 backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-sm p-md">
+<button class="w-full py-2 border border-white/20 text-on-surface rounded-lg font-label-mono text-label-mono uppercase hover:bg-white/10 transition-all flex items-center justify-center gap-xs">
+<span class="material-symbols-outlined text-[18px]">movie_edit</span> Studio Editor
+           </button>
+<button class="w-full py-2 bg-primary text-on-primary rounded-lg font-label-mono text-label-mono uppercase hover:brightness-110 flex items-center justify-center gap-xs transition-all">
+<span class="material-symbols-outlined text-[18px]">cloud_upload</span> Distribute Now
+           </button>
+</div>
+</div>
+</div>
+<!-- Clip Card 3 (Empty State Placeholder) -->
+<div class="group relative bg-surface-container-lowest/50 backdrop-blur-md rounded-xl overflow-hidden border border-white/[0.05] border-dashed flex flex-col items-center justify-center min-h-[400px]">
+<div class="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-md border border-white/10">
+<span class="material-symbols-outlined text-on-surface-variant text-[32px]">auto_awesome</span>
+</div>
+<span class="font-label-mono text-label-mono text-on-surface-variant uppercase tracking-widest text-center px-lg">AI Pipeline Processing<br/>More Clips Soon</span>
+<div class="mt-md w-24 h-1 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="w-1/3 h-full bg-primary animate-[pulse_1s_ease-in-out_infinite]"></div>
+</div>
+</div>
+</div>
+</div></main></div>
+</body></html>

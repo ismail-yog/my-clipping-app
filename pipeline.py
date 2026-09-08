@@ -20,6 +20,7 @@ from detector.audio import AudioDetector
 from detector.chat import create_chat_monitor
 from detector.sentiment import SentimentDetector
 from processor.scorer import Scorer, MomentScore
+from processor.hook_scorer import HookScorer, HookCandidate
 from processor.clipper import Clipper, ClipMetadata
 from processor.seo import SEOGenerator
 from processor.hook import HookOverlayRenderer
@@ -31,6 +32,52 @@ from dream_team import config as dt_config
 from dream_team.director import Director
 
 logger = logging.getLogger("streamclipper.pipeline")
+
+
+def calculate_dynamic_clip_duration_ms(
+    transcript_segments: list,
+    start_offset_ms: int = 5000,
+    min_duration_ms: int = 30000,
+    max_duration_ms: int = 45000,
+    default_duration_ms: int = 35000,
+) -> int:
+    """
+    Calculate dynamic clip duration strictly between 30 and 45 seconds (integer ms).
+    Snaps to the most natural sentence or phrase boundary within the [30s, 45s] window
+    to avoid mid-word truncation and eliminate static 1-minute cuts.
+    """
+    if not transcript_segments:
+        return min(max_duration_ms, max(min_duration_ms, default_duration_ms))
+
+    min_boundary_ms = start_offset_ms + min_duration_ms
+    max_boundary_ms = start_offset_ms + max_duration_ms
+
+    viable_ends = []
+    punctuated_ends = []
+
+    for seg in transcript_segments:
+        end_sec = getattr(seg, "end", None)
+        if end_sec is None and isinstance(seg, dict):
+            end_sec = seg.get("end", 0.0)
+        if end_sec is None:
+            continue
+
+        end_ms = int(round(float(end_sec) * 1000.0))
+        if min_boundary_ms <= end_ms <= max_boundary_ms:
+            viable_ends.append(end_ms)
+            text = (getattr(seg, "text", None) or (seg.get("text") if isinstance(seg, dict) else "") or "").strip()
+            if text.endswith((".", "!", "?", "...", "—")):
+                punctuated_ends.append(end_ms)
+
+    if punctuated_ends:
+        chosen_end_ms = punctuated_ends[-1]
+    elif viable_ends:
+        chosen_end_ms = viable_ends[-1]
+    else:
+        return min(max_duration_ms, max(min_duration_ms, default_duration_ms))
+
+    calculated_duration_ms = chosen_end_ms - start_offset_ms
+    return min(max_duration_ms, max(min_duration_ms, calculated_duration_ms))
 
 
 class StreamPipeline:
@@ -53,6 +100,7 @@ class StreamPipeline:
         self.chat_monitor = create_chat_monitor(self.streamer)
         self.sentiment_detector = SentimentDetector()
         self.scorer = Scorer(on_trigger=self._on_moment_triggered)
+        self.hook_scorer = HookScorer(min_hook_score=65)
         self.clipper = Clipper()
         self.seo = SEOGenerator()
         self.hook_renderer = HookOverlayRenderer()
@@ -202,51 +250,116 @@ class StreamPipeline:
 
     def _on_moment_triggered(self, moment: MomentScore):
         """Called when the scorer triggers a clip extraction."""
-        logger.info("🎬 Processing highlight moment (score=%.2f)", moment.combined_score)
+        if moment.combined_score < 0.65:
+            logger.info("🗑️ Moment score %.2f < 0.65 (65%%) viral threshold — dumping immediately", moment.combined_score)
+            return
+
+        logger.info("🎬 Acoustic/chat trigger fired (score=%.2f >= 0.65). Extracting buffer for semantic validation...", moment.combined_score)
 
         try:
-            # Determine how far back to look
-            duration = config.clip_settings.default_duration
-            lookback = duration + 10  # Extra buffer
-
-            # Get concatenated video from buffer
+            lookback = 60.0  # 60s buffer is captured to allow 30-45s clip + margins
             start_time = time.time() - lookback
             source_video = self.capture.get_concat_file(start_time, lookback)
             if not source_video:
                 logger.error("Failed to get source video from buffer")
                 return
 
-            # Get transcript for captions
+            # Get transcript for captions and semantic validation
             audio_path = self.capture.extract_audio(source_video)
             transcript_segments = []
             if audio_path:
-                transcript_segments = self.sentiment_detector.transcribe(audio_path)
+                try:
+                    transcript_segments = self.sentiment_detector.transcribe(audio_path)
+                finally:
+                    try:
+                        audio_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+            if not transcript_segments:
+                logger.info("🗑️ Semantic gate rejected trigger: audio buffer contains no speech — dumping false trigger")
+                return
+
+            # Semantic Gate: Validate transcript using HookScorer (LLM / heuristic)
+            candidate = self.hook_scorer.evaluate_moment_buffer(
+                transcript_segments=transcript_segments,
+                streamer_name=self.streamer.name,
+                min_score=65,
+            )
+
+            if not candidate or candidate.hook_score < 65:
+                score_val = candidate.hook_score if candidate else 0
+                logger.info(
+                    "🗑️ Semantic gate rejected trigger: hook score %d < 65%% (lacks narrative retention or punchline) — dumping false trigger",
+                    score_val
+                )
+                return
+
+            semantic_score = round(candidate.hook_score / 100.0, 3)
+            fused_score = round(0.4 * moment.combined_score + 0.6 * semantic_score, 3)
+            logger.info(
+                "🔥 Moment validated by semantic gate: acoustic=%.2f, semantic=%.2f, fused=%.2f (reason: %s)",
+                moment.combined_score, semantic_score, fused_score, candidate.reasoning
+            )
+
+            if fused_score < 0.65:
+                logger.info("🗑️ Fused viral score %.2f < 0.65 — dumping immediately", fused_score)
+                return
+
+            # Dynamic clip duration strictly between 30 and 45 seconds (integer ms)
+            start_offset_ms = candidate.start_ms
+            duration_ms = candidate.end_ms - candidate.start_ms
+            if duration_ms < 30000:
+                duration_ms = 30000
+            elif duration_ms > 45000:
+                duration_ms = 45000
+
+            duration = float(duration_ms / 1000.0)
+            start_offset_sec = float(start_offset_ms / 1000.0)
+            logger.info("🎬 Selected dynamic clip: start=%.2fs, duration=%.2fs (%d ms, bounds: 30-45s)", start_offset_sec, duration, duration_ms)
 
             # Determine primary emotion
             emotion = ""
             if moment.sentiment_events:
                 emotion = moment.sentiment_events[0].emotion
 
-            # Create the clip (crop + caption)
+            # Filter segments matching clip range
+            clip_segments = [
+                s for s in transcript_segments
+                if (float(getattr(s, "start", 0.0) if not isinstance(s, dict) else s.get("start", 0.0)) * 1000.0) >= start_offset_ms
+                and (float(getattr(s, "end", 0.0) if not isinstance(s, dict) else s.get("end", 0.0)) * 1000.0) <= (start_offset_ms + duration_ms)
+            ]
+
+            # Fetch latest streamer configuration directly from DB to prevent stale in-memory style overrides
+            streamer_db = self.db.get_streamer_by_name(self.streamer.name) or {}
+            stream_framing = streamer_db.get("framing_mode") or getattr(self.streamer, "framing_mode", "white_canvas")
+            stream_subtitles = streamer_db.get("subtitle_style") or getattr(self.streamer, "subtitle_style", "glacier_glow")
             clip_meta = self.clipper.create_clip(
                 source_video=source_video,
                 streamer=self.streamer,
-                start_offset=5.0,  # Skip first 5s of buffer padding
+                start_offset=start_offset_sec,
                 duration=duration,
-                moment_score=moment.combined_score,
-                transcript_segments=transcript_segments,
+                moment_score=fused_score,
+                transcript_segments=clip_segments if clip_segments else transcript_segments,
                 emotion=emotion,
+                layout_type=stream_framing,
+                subtitle_style=stream_subtitles,
             )
 
-            if not clip_meta:
-                logger.error("Clip creation failed")
+            if not clip_meta or clip_meta.moment_score < 0.65:
+                logger.info("🗑️ Clip score < 0.65 — dumping immediately")
+                if clip_meta and clip_meta.clip_path:
+                    try:
+                        Path(clip_meta.clip_path).unlink(missing_ok=True)
+                    except Exception:
+                        pass
                 return
 
             self._clips_created += 1
 
-            # Automatically approve and upload every detected highlight clip
-            auto_approve = True
-            logger.info("🎬 Auto-approving clip %s for immediate upload", clip_meta.clip_id)
+            # Only auto-approve if >= 0.65
+            auto_approve = clip_meta.moment_score >= 0.65
+            logger.info("🎬 Auto-approving clip %s (score=%.2f >= 0.65) for upload", clip_meta.clip_id, clip_meta.moment_score)
 
             # Save clip to database
             self.db.save_clip(
@@ -263,15 +376,31 @@ class StreamPipeline:
                 auto_approve=auto_approve,
             )
 
-            # Generate SEO metadata (Ollama or template)
-            seo_meta = self.seo.generate(
-                transcript=clip_meta.transcript,
-                streamer_name=self.streamer.name,
-                emotion=emotion,
-                platform=self.streamer.platform,
-            )
+            # Generate SEO metadata (Ollama or template), preserving candidate title & hook
+            try:
+                seo_meta = self.seo.generate(
+                    transcript=clip_meta.transcript,
+                    streamer_name=self.streamer.name,
+                    emotion=emotion,
+                    platform=self.streamer.platform,
+                )
+                final_title = candidate.title or seo_meta.title
+                final_hook = candidate.hook_text or seo_meta.hook_text
+            except Exception as e:
+                logger.error("SEO Generator failed in pipeline: %s", e)
+                final_title = candidate.title or f"{self.streamer.name} Viral Highlight"
+                final_hook = candidate.hook_text or "WAIT FOR IT 💀"
+                from processor.seo import SEOMetadata
+                seo_meta = SEOMetadata(
+                    title=final_title,
+                    description=clip_meta.transcript[:200],
+                    tags=["shorts", "viral", self.streamer.name.lower()],
+                    hook_text=final_hook,
+                    thumbnail_prompt="",
+                    generated_by="fallback",
+                )
 
-            clip_meta.title = seo_meta.title
+            clip_meta.title = final_title
             clip_meta.description = seo_meta.description
             clip_meta.tags = seo_meta.tags
             clip_meta.seo_ready = True
@@ -279,16 +408,16 @@ class StreamPipeline:
             # Save SEO to database
             self.db.update_clip_seo(
                 clip_id=clip_meta.clip_id,
-                title=seo_meta.title,
+                title=final_title,
                 description=seo_meta.description,
                 tags=seo_meta.tags,
-                hook_text=seo_meta.hook_text,
+                hook_text=final_hook,
                 seo_method=seo_meta.generated_by,
             )
 
             logger.info(
-                "SEO generated (%s): %s | Hook: '%s'",
-                seo_meta.generated_by, seo_meta.title, seo_meta.hook_text,
+                "SEO saved (%s): %s | Hook: '%s'",
+                seo_meta.generated_by, final_title, final_hook,
             )
 
             # ── Dream Team Enhancement ───────────────────────────────
@@ -324,7 +453,12 @@ class StreamPipeline:
                             seo_method=f"{seo_meta.generated_by}+dreamteam",
                         )
 
-                    # Check moderation result — override auto_approve if rejected
+                    # Check moderation & virality result
+                    if dt_result.get("viral_score", clip_meta.moment_score) < 0.65:
+                        logger.info("🛡️ Dream Team viral score %.2f < 0.65 — dumping clip %s immediately", dt_result.get("viral_score", 0.0), clip_meta.clip_id)
+                        self.db.delete_clip(clip_meta.clip_id)
+                        return
+
                     mod_action = dt_result.get("moderation_action", "approve")
                     if mod_action == "reject":
                         auto_approve = False
@@ -348,12 +482,19 @@ class StreamPipeline:
                 except Exception as dt_exc:
                     logger.warning("Dream Team processing failed (non-fatal): %s", dt_exc)
 
-            # Apply hook, watermark, and outro overlay
+            # Apply hook, watermark, and outro overlay (layout-aware)
+            streamer_db = self.db.get_streamer_by_name(self.streamer.name) or {}
+            effective_framing = streamer_db.get("framing_mode") or getattr(self.streamer, "framing_mode", "white_canvas")
+            effective_plat = streamer_db.get("platform") or getattr(self.streamer, "platform", "twitch")
+
             clip_path = Path(clip_meta.clip_path)
             hook_result = self.hook_renderer.apply(
-                clip_path,
-                seo_meta.hook_text,
+                clip_path=clip_path,
+                hook_text=seo_meta.hook_text,
                 watermark_text=f"@{self.streamer.name}",
+                layout_type=effective_framing,
+                streamer_name=self.streamer.name,
+                platform=effective_plat,
             )
             if hook_result:
                 self.db.update_clip_hook(clip_meta.clip_id, has_hook=True)
@@ -369,6 +510,13 @@ class StreamPipeline:
 
             # If auto-approved, submit upload job to queue
             if auto_approve:
+                delay_sec = 0.0
+                try:
+                    from processor.scheduler import calculate_next_upload_delay
+                    delay_sec = calculate_next_upload_delay(self.db)
+                except Exception as exc:
+                    logger.warning("Failed to calculate upload schedule delay: %s", exc)
+
                 self.task_queue.submit(
                     job_type="upload",
                     clip_id=clip_meta.clip_id,
@@ -380,8 +528,13 @@ class StreamPipeline:
                         "thumbnail_path": str(thumb_path) if thumb_path else "",
                     },
                     priority=3,
+                    delay_seconds=delay_sec,
                 )
-                logger.info("📤 Auto-approved clip queued for upload: %s", clip_meta.clip_id)
+                logger.info(
+                    "📤 Auto-approved clip queued for upload: %s (scheduled delay: %.1fs)",
+                    clip_meta.clip_id,
+                    delay_sec
+                )
             else:
                 logger.info(
                     "⏸ Clip awaiting review: %s (approve via dashboard)",
@@ -434,23 +587,30 @@ class PipelineManager:
         self.task_queue.register("upload", self._handle_upload_job)
         self.task_queue.register("vod_process", self._handle_vod_job)
 
+    @property
+    def monitor(self) -> Optional[StreamMonitor]:
+        """Return the active StreamMonitor instance."""
+        return self._monitor
+
     def _handle_vod_job(self, job: dict) -> JobResult:
         """Handle VOD processing job."""
         from processor.vod import VODProcessor
-        url = job.get("payload", {}).get("url")
-        layout_type = job.get("payload", {}).get("layout_type", "gamer")
+        payload = job.get("payload", {})
+        url = payload.get("url")
+        layout_type = payload.get("layout_type", "white_canvas")
+        subtitle_style = payload.get("subtitle_style", "hormozi")
         job_id = str(job.get("id", ""))
         if not url:
             return JobResult(success=False, error="No URL provided")
             
         processor = VODProcessor(self.db, self.task_queue)
-        success = processor.process_url(url, job_id, layout_type=layout_type)
+        success = processor.process_url(url, job_id, layout_type=layout_type, subtitle_style=subtitle_style)
         if success:
             return JobResult(success=True, result="VOD processed successfully")
         return JobResult(success=False, error="VOD processing failed")
 
     def _handle_upload_job(self, job: dict) -> JobResult:
-        """Handle an upload job from the queue."""
+        """Handle an upload job from the queue with strict deduplication and idempotency safeguards."""
         payload = job.get("payload", {})
         clip_id = job.get("clip_id", "")
 
@@ -460,21 +620,43 @@ class PipelineManager:
         tags = payload.get("tags", [])
         thumbnail_path = payload.get("thumbnail_path", "")
 
+        # 1. Check if clip was deleted from database
+        clip = self.db.get_clip(clip_id)
+        if not clip:
+            logger.warning("Upload aborted: clip %s was deleted or does not exist in DB", clip_id)
+            return JobResult(success=False, error=f"Clip {clip_id} not found in database (deleted)")
+
+        # 2. Check if clip has already been uploaded (idempotency safeguard)
+        if clip.get("status") == ClipStatus.UPLOADED:
+            logger.info("Clip %s already marked as uploaded in database — skipping duplicate upload", clip_id)
+            return JobResult(success=True, result="Clip already uploaded")
+
+        with self.db._conn() as conn:
+            existing_upload = conn.execute(
+                "SELECT video_id, video_url FROM uploads WHERE clip_id = ? AND success = 1 AND video_id != ''",
+                (clip_id,),
+            ).fetchone()
+            if existing_upload:
+                logger.info(
+                    "Clip %s already has recorded successful upload (ID: %s, URL: %s) — skipping duplicate upload",
+                    clip_id, existing_upload[0], existing_upload[1],
+                )
+                self.db.update_clip_status(clip_id, ClipStatus.UPLOADED)
+                return JobResult(success=True, result=f"Already uploaded: {existing_upload[1]}")
+
+        # 3. Check viral threshold — if less than 65%, dump immediately
+        if clip.get("moment_score", 0.0) < 0.65:
+            logger.warning("Clip %s score %.2f is below 65%% threshold — aborting upload and dumping clip", clip_id, clip.get("moment_score", 0.0))
+            self.db.delete_clip(clip_id)
+            return JobResult(success=False, error="Clip moment score below 65% viral threshold")
+
         if not clip_path.exists():
             return JobResult(success=False, error=f"Clip file not found: {clip_path}")
-
-        # Check daily quota
-        uploads_today = self.db.count_uploads_today()
-        if uploads_today >= config.UPLOAD_MAX_PER_DAY:
-            return JobResult(
-                success=False,
-                error=f"Daily upload quota reached ({uploads_today}/{config.UPLOAD_MAX_PER_DAY})",
-            )
 
         # Update clip status
         self.db.update_clip_status(clip_id, ClipStatus.UPLOADING)
 
-        # Upload
+        # Upload with automatic multi-account cascade (Account 1 -> Account 2 -> Account 3)
         upload_result = self._uploader.upload(
             video_path=clip_path,
             title=title,
@@ -482,28 +664,40 @@ class PipelineManager:
             tags=tags,
         )
 
-        # Set thumbnail if upload succeeded and thumbnail exists
+        account_id = getattr(upload_result, "account_id", "account1")
+
+        # Set thumbnail if upload succeeded and thumbnail exists using the account that uploaded it
         if upload_result.success and thumbnail_path and Path(thumbnail_path).exists():
             try:
                 self._uploader.set_thumbnail(
-                    upload_result.video_id, Path(thumbnail_path)
+                    upload_result.video_id,
+                    Path(thumbnail_path),
+                    account_id=account_id,
                 )
             except Exception as e:
                 logger.warning("Thumbnail upload failed: %s", e)
 
-        # Record in database
-        self.db.save_upload(
-            clip_id=clip_id,
-            success=upload_result.success,
-            video_id=upload_result.video_id,
-            video_url=upload_result.video_url,
-            error=upload_result.error,
-        )
+        # Record in database with account attribution
+        try:
+            self.db.save_upload(
+                clip_id=clip_id,
+                success=upload_result.success,
+                video_id=upload_result.video_id,
+                video_url=upload_result.video_url,
+                error=upload_result.error,
+                account_id=account_id,
+            )
+        except Exception as e:
+            logger.error("Failed to record upload in database: %s", e)
+            if upload_result.success:
+                self.db.update_clip_status(clip_id, ClipStatus.UPLOADED)
+            else:
+                self.db.update_clip_status(clip_id, ClipStatus.FAILED)
 
         if upload_result.success:
             return JobResult(
                 success=True,
-                result=f"Uploaded: {upload_result.video_url}",
+                result=f"Uploaded to {account_id}: {upload_result.video_url}",
             )
         else:
             return JobResult(success=False, error=upload_result.error)
@@ -572,13 +766,26 @@ class PipelineManager:
         if not clip:
             return False
 
+        # Strict rule: already uploaded clips can NEVER be re-approved or re-uploaded
+        if clip.get("status") == ClipStatus.UPLOADED:
+            logger.warning("Clip %s is already uploaded — re-upload forbidden", clip_id)
+            return False
+
         # Idempotency check
-        if clip.get("status") in [ClipStatus.APPROVED, ClipStatus.UPLOADING, ClipStatus.UPLOADED]:
+        if clip.get("status") in [ClipStatus.APPROVED, ClipStatus.UPLOADING]:
             logger.info("Clip %s is already in status %s — skipping redundant approval", clip_id, clip["status"])
             return True
 
         if not self.db.update_clip_status(clip_id, ClipStatus.APPROVED):
             return False
+
+        # Calculate scheduling delay
+        delay_sec = 0.0
+        try:
+            from processor.scheduler import calculate_next_upload_delay
+            delay_sec = calculate_next_upload_delay(self.db)
+        except Exception as exc:
+            logger.warning("Failed to calculate upload schedule delay: %s", exc)
 
         # Submit upload job
         self.task_queue.submit(
@@ -592,7 +799,9 @@ class PipelineManager:
                 "thumbnail_path": clip.get("thumbnail_path", ""),
             },
             priority=3,
+            delay_seconds=delay_sec,
         )
+        logger.info("Clip %s queued for upload (scheduled delay: %.1fs)", clip_id, delay_sec)
         return True
 
     def reject_clip(self, clip_id: str) -> bool:

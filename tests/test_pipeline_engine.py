@@ -165,5 +165,72 @@ class TestDreamTeamTools(unittest.TestCase):
         self.assertEqual(res, "#viral #shorts #gamingmoment")
 
 
+class TestViralThresholdAndUploadSafeguards(unittest.TestCase):
+    """Verify strict 65% viral score enforcement and upload deduplication safeguards."""
+
+    def setUp(self):
+        self.test_db_path = config.TEMP_MEDIA_DIR / f"test_viral_{int(time.time() * 1000)}.db"
+        self.db = Database(str(self.test_db_path))
+
+    def tearDown(self):
+        del self.db
+        safe_unlink(self.test_db_path)
+
+    def test_save_clip_strictly_dumps_sub_65(self):
+        # Clip with 64% score must be rejected
+        row_id_fail = self.db.save_clip(
+            clip_id="test_sub_65",
+            streamer_name="test",
+            platform="twitch",
+            clip_path="dummy.mp4",
+            duration=30.0,
+            moment_score=0.64,
+        )
+        self.assertEqual(row_id_fail, 0)
+        self.assertIsNone(self.db.get_clip("test_sub_65"))
+
+        # Clip with 65% score must be saved
+        row_id_ok = self.db.save_clip(
+            clip_id="test_65",
+            streamer_name="test",
+            platform="twitch",
+            clip_path="dummy.mp4",
+            duration=30.0,
+            moment_score=0.65,
+        )
+        self.assertGreater(row_id_ok, 0)
+        self.assertIsNotNone(self.db.get_clip("test_65"))
+
+    def test_clipper_create_clip_dumps_sub_65_immediately(self):
+        clipper = Clipper()
+        # moment_score 0.50 should return None immediately without running FFmpeg
+        res = clipper.create_clip(
+            source_video=Path("nonexistent.mp4"),
+            streamer=None,
+            start_offset=0,
+            duration=30,
+            moment_score=0.50,
+        )
+        self.assertIsNone(res)
+
+    def test_upload_job_max_retries_and_deduplication(self):
+        tq = TaskQueue(self.db)
+        
+        # Submitting an upload job must have max_retries = 1
+        job_id_1 = tq.submit(job_type="upload", clip_id="clip_test_dedup", payload={"clip_path": "x.mp4"})
+        job_1 = self.db.get_job(job_id_1)
+        self.assertEqual(job_1["max_retries"], 1)
+
+        # Submitting duplicate upload job for same clip_id must return existing job ID without creating duplicate
+        job_id_2 = tq.submit(job_type="upload", clip_id="clip_test_dedup", payload={"clip_path": "x.mp4"})
+        self.assertEqual(job_id_1, job_id_2)
+
+        # Total upload jobs in DB for this clip must be exactly 1
+        with self.db._conn() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM jobs WHERE clip_id = 'clip_test_dedup'").fetchone()[0]
+            self.assertEqual(count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
+

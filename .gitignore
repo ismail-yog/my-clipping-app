@@ -22,8 +22,11 @@ pip-delete-this-directory.txt
 .env.development.local
 .env.test.local
 .env.production.local
-client_secrets.json
-youtube_token.json
+client_secrets*.json
+*token*.json
+token*.json
+yolov8n.pt
+scratch/
 
 # Logs
 *.log

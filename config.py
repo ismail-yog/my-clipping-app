@@ -58,6 +58,8 @@ class StreamerConfig:
     url: str  # Full URL to the stream
     enabled: bool = True
     auto_approve: bool = False  # Auto-approve clips without review
+    framing_mode: str = "white_canvas"  # "white_canvas", "gamer", "speaker", "center", "split", "blur"
+    subtitle_style: str = "glacier_glow"  # "glacier_glow", "harmazi_yellow", "mrbeast", "tiktok_bold", "neon_cyber", "clean_sans"
 
 
 @dataclass
@@ -81,7 +83,7 @@ class DetectionThresholds:
     sentiment_weight: float = 0.3
 
     # Overall scoring
-    moment_threshold: float = 0.40  # Score 0-1 to trigger a clip
+    moment_threshold: float = 0.65  # Score 0-1 to trigger a clip (strictly >= 65%)
     cooldown_seconds: float = 60.0  # Minimum gap between clips
 
 
@@ -89,9 +91,9 @@ class DetectionThresholds:
 class ClipSettings:
     """Settings for clip extraction and formatting."""
 
-    min_duration: int = 30  # seconds
-    max_duration: int = 90  # seconds
-    default_duration: int = 60  # seconds
+    min_duration: int = 30  # seconds (strictly 30-45s)
+    max_duration: int = 45  # seconds (strictly 30-45s)
+    default_duration: int = 35  # seconds (target 30-45s)
     output_width: int = 1080  # 9:16 portrait
     output_height: int = 1920
     output_fps: int = 30
@@ -147,7 +149,7 @@ class VODSettings:
     """Settings for VOD processing (Clip Generator)."""
 
     max_clips: int = 3
-    clip_duration: int = 45  # target seconds
+    clip_duration: int = 35  # target seconds (strictly 30-45s)
     download_resolution: int = 1080
     parallel_renders: int = 2
     use_fast_whisper: bool = True
@@ -161,7 +163,11 @@ class VODSettings:
             try:
                 data = json.loads(settings_file.read_text())
                 if "max_clips" in data: self.max_clips = int(data["max_clips"])
-                if "clip_duration" in data: self.clip_duration = int(data["clip_duration"])
+                if "clip_duration" in data:
+                    self.clip_duration = max(30, min(45, int(data["clip_duration"])))
+                    clip_settings.default_duration = self.clip_duration
+                    clip_settings.min_duration = 30
+                    clip_settings.max_duration = 45
                 if "download_resolution" in data: self.download_resolution = int(data["download_resolution"])
                 if "parallel_renders" in data: self.parallel_renders = int(data["parallel_renders"])
                 if "use_fast_whisper" in data: self.use_fast_whisper = bool(data["use_fast_whisper"])
@@ -181,9 +187,16 @@ TWITCH_HELIX_URL: str = "https://api.twitch.tv/helix"
 
 YOUTUBE_CLIENT_SECRETS: str = os.getenv("YOUTUBE_CLIENT_SECRETS", str(BASE_DIR / "client_secrets.json"))
 YOUTUBE_TOKEN_FILE: str = os.getenv("YOUTUBE_TOKEN_FILE", str(BASE_DIR / "youtube_token.json"))
+YOUTUBE_ACCOUNT_2_CLIENT_SECRETS: str = os.getenv("YOUTUBE_ACCOUNT_2_CLIENT_SECRETS", str(BASE_DIR / "client_secrets_account2.json"))
+YOUTUBE_ACCOUNT_2_TOKEN_FILE: str = os.getenv("YOUTUBE_ACCOUNT_2_TOKEN_FILE", str(BASE_DIR / "youtube_token_account2.json"))
+YOUTUBE_ACCOUNT_3_CLIENT_SECRETS: str = os.getenv("YOUTUBE_ACCOUNT_3_CLIENT_SECRETS", str(BASE_DIR / "client_secrets_account3.json"))
+YOUTUBE_ACCOUNT_3_TOKEN_FILE: str = os.getenv("YOUTUBE_ACCOUNT_3_TOKEN_FILE", str(BASE_DIR / "youtube_token_account3.json"))
 YOUTUBE_API_SERVICE_NAME: str = "youtube"
 YOUTUBE_API_VERSION: str = "v3"
-YOUTUBE_SCOPES: list = ["https://www.googleapis.com/auth/youtube.upload"]
+YOUTUBE_SCOPES: list = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+]
 YOUTUBE_CATEGORY_ID: str = "22"  # "People & Blogs"
 
 # ── NVIDIA NIM & AI Foundation API ──────────────────────────────────────────
@@ -306,8 +319,51 @@ vod_settings = VODSettings()
 vod_settings.load_dynamic()
 
 
-def get_streamers() -> list[StreamerConfig]:
-    """Return all enabled streamers."""
+def get_streamers(db: Optional[Any] = None) -> list[StreamerConfig]:
+    """Return enabled streamers, prioritizing database if available."""
+    if db is not None:
+        try:
+            db_streamers = db.get_streamers(enabled_only=True)
+            if db_streamers:
+                return [
+                    StreamerConfig(
+                        name=s["name"],
+                        platform=s["platform"],
+                        channel=s["channel"],
+                        url=s["url"],
+                        enabled=bool(s["enabled"]),
+                        auto_approve=bool(s.get("auto_approve", 0)),
+                        framing_mode=s.get("framing_mode") or "white_canvas",
+                        subtitle_style=s.get("subtitle_style") or "glacier_glow",
+                    )
+                    for s in db_streamers
+                ]
+        except Exception as e:
+            logger.error("Failed to load streamers from DB: %s", e)
+
+    # Fallback to direct DB load if database exists
+    try:
+        from database import Database
+        _db = Database()
+        db_streamers = _db.get_streamers(enabled_only=True)
+        _db.close()
+        if db_streamers:
+            return [
+                StreamerConfig(
+                    name=s["name"],
+                    platform=s["platform"],
+                    channel=s["channel"],
+                    url=s["url"],
+                    enabled=bool(s["enabled"]),
+                    auto_approve=bool(s.get("auto_approve", 0)),
+                    framing_mode=s.get("framing_mode") or "white_canvas",
+                    subtitle_style=s.get("subtitle_style") or "glacier_glow",
+                )
+                for s in db_streamers
+            ]
+    except Exception:
+        pass
+
     return [s for s in DEFAULT_STREAMERS if s.enabled]
 
 

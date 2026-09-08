@@ -91,9 +91,10 @@ class Scorer:
             if active_signals >= 3:
                 combined = min(1.0, combined * 1.25)
 
-            # Check threshold and cooldown (time since last trigger > cooldown_seconds)
+            # Check threshold (strictly >= 0.65 / 65% viral score) and cooldown
+            effective_threshold = max(0.65, getattr(w, "moment_threshold", 0.65))
             time_since_last = now - self._last_trigger_time
-            triggered = (combined > w.moment_threshold) and (time_since_last > w.cooldown_seconds)
+            triggered = (combined >= effective_threshold) and (time_since_last > w.cooldown_seconds)
 
             # Determine reason string
             reasons = []

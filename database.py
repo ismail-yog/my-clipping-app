@@ -84,7 +84,8 @@ CREATE TABLE IF NOT EXISTS uploads (
     video_url   TEXT DEFAULT '',
     success     INTEGER NOT NULL DEFAULT 0,
     error       TEXT DEFAULT '',
-    uploaded_at REAL NOT NULL
+    uploaded_at REAL NOT NULL,
+    account_id  TEXT DEFAULT 'account1'
 );
 
 CREATE TABLE IF NOT EXISTS jobs (
@@ -146,7 +147,6 @@ class JobStatus:
 
 # ── Database Class ──────────────────────────────────────────────────────────
 
-
 class Database:
     """Thread-safe SQLite database for StreamClipper."""
 
@@ -173,7 +173,7 @@ class Database:
             raise
 
     def _init_schema(self):
-        """Create tables if they don't exist."""
+        """Create tables if they don't exist and run non-destructive schema migrations."""
         with self._conn() as conn:
             conn.executescript(SCHEMA_SQL)
             # Set schema version
@@ -184,6 +184,28 @@ class Database:
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (SCHEMA_VERSION,),
                 )
+
+            # Auto-migrate: ensure account_id column exists in uploads table
+            try:
+                conn.execute("ALTER TABLE uploads ADD COLUMN account_id TEXT DEFAULT 'account1'")
+            except sqlite3.OperationalError:
+                pass
+
+            # Auto-migrate: ensure framing_mode and subtitle_style exist in streamers table
+            try:
+                conn.execute("ALTER TABLE streamers ADD COLUMN framing_mode TEXT DEFAULT 'white_canvas'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE streamers ADD COLUMN subtitle_style TEXT DEFAULT 'glacier_glow'")
+            except sqlite3.OperationalError:
+                pass
+
+            try:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_account ON uploads(account_id)")
+            except sqlite3.OperationalError:
+                pass
+
             logger.debug("Schema initialized (v%d)", SCHEMA_VERSION)
 
     # ── Streamers ───────────────────────────────────────────────────────────
@@ -196,16 +218,18 @@ class Database:
         url: str,
         enabled: bool = True,
         auto_approve: bool = False,
+        framing_mode: str = "white_canvas",
+        subtitle_style: str = "glacier_glow",
     ) -> int:
         """Add a new streamer. Returns the streamer ID."""
         now = time.time()
         with self._conn() as conn:
             cursor = conn.execute(
-                """INSERT INTO streamers (name, platform, channel, url, enabled, auto_approve, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (name, platform, channel, url, int(enabled), int(auto_approve), now, now),
+                """INSERT INTO streamers (name, platform, channel, url, enabled, auto_approve, framing_mode, subtitle_style, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (name, platform, channel, url, int(enabled), int(auto_approve), framing_mode, subtitle_style, now, now),
             )
-            logger.info("Added streamer: %s (%s/%s)", name, platform, channel)
+            logger.info("Added streamer: %s (%s/%s, framing=%s)", name, platform, channel, framing_mode)
             return cursor.lastrowid
 
     def get_streamers(self, enabled_only: bool = False) -> list[dict]:
@@ -226,9 +250,16 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def get_streamer_by_name(self, name: str) -> Optional[dict]:
+        """Get a single streamer by name (case-insensitive)."""
+        with self._conn() as conn:
+            cursor = conn.execute("SELECT * FROM streamers WHERE LOWER(name) = LOWER(?)", (name.strip(),))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def update_streamer(self, streamer_id: int, **kwargs) -> bool:
         """Update streamer fields."""
-        allowed = {"name", "platform", "channel", "url", "enabled", "auto_approve"}
+        allowed = {"name", "platform", "channel", "url", "enabled", "auto_approve", "framing_mode", "subtitle_style"}
         updates = {k: v for k, v in kwargs.items() if k in allowed}
         if not updates:
             return False
@@ -244,9 +275,19 @@ class Database:
         return True
 
     def delete_streamer(self, streamer_id: int) -> bool:
-        """Delete a streamer."""
+        """Delete a streamer and cleanup associated sessions cleanly."""
         with self._conn() as conn:
+            # Unlink clips from sessions belonging to this streamer so clips remain intact
+            conn.execute(
+                """UPDATE clips SET session_id = NULL
+                   WHERE session_id IN (SELECT id FROM sessions WHERE streamer_id = ?)""",
+                (streamer_id,),
+            )
+            # Delete associated sessions
+            conn.execute("DELETE FROM sessions WHERE streamer_id = ?", (streamer_id,))
+            # Delete streamer record
             conn.execute("DELETE FROM streamers WHERE id = ?", (streamer_id,))
+        logger.info("Streamer %d deleted successfully from DB", streamer_id)
         return True
 
     # ── Sessions ────────────────────────────────────────────────────────────
@@ -300,7 +341,11 @@ class Database:
         session_id: Optional[int] = None,
         auto_approve: bool = False,
     ) -> int:
-        """Save a new clip. Returns the row ID."""
+        """Save a new clip. Strictly dumps any clip with moment_score < 0.65."""
+        if moment_score < 0.65:
+            logger.info("🗑️ Refusing to save clip %s: score %.2f < 0.65 threshold — dumping immediately", clip_id, moment_score)
+            return 0
+
         now = time.time()
         status = ClipStatus.APPROVED if auto_approve else ClipStatus.PENDING_REVIEW
 
@@ -317,7 +362,7 @@ class Database:
                     int(has_captions), status, now, now,
                 ),
             )
-            logger.info("Clip saved: %s (status=%s)", clip_id, status)
+            logger.info("Clip saved: %s (score=%.2f, status=%s)", clip_id, moment_score, status)
             return cursor.lastrowid
 
     def update_clip_seo(
@@ -489,14 +534,24 @@ class Database:
         video_id: str = "",
         video_url: str = "",
         error: str = "",
+        account_id: str = "account1",
     ) -> int:
-        """Record an upload attempt."""
+        """Record an upload attempt with the responsible account ID."""
         now = time.time()
         with self._conn() as conn:
+            # Check if clip exists in clips table to satisfy foreign key constraint
+            clip_exists = conn.execute("SELECT 1 FROM clips WHERE clip_id = ?", (clip_id,)).fetchone()
+            if not clip_exists:
+                conn.execute(
+                    """INSERT OR IGNORE INTO clips (clip_id, streamer_name, platform, clip_path, duration, moment_score, status, created_at, updated_at)
+                       VALUES (?, 'unknown', 'unknown', '', 0.0, 0.0, 'uploaded', ?, ?)""",
+                    (clip_id, now, now),
+                )
+
             cursor = conn.execute(
-                """INSERT INTO uploads (clip_id, video_id, video_url, success, error, uploaded_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (clip_id, video_id, video_url, int(success), error, now),
+                """INSERT INTO uploads (clip_id, video_id, video_url, success, error, uploaded_at, account_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (clip_id, video_id, video_url, int(success), error, now, account_id),
             )
 
             # Update clip status
@@ -505,28 +560,43 @@ class Database:
                     "UPDATE clips SET status = 'uploaded', updated_at = ? WHERE clip_id = ?",
                     (now, clip_id),
                 )
+            else:
+                conn.execute(
+                    "UPDATE clips SET status = 'failed', updated_at = ? WHERE clip_id = ?",
+                    (now, clip_id),
+                )
 
             return cursor.lastrowid
 
     def get_uploads(self, limit: int = 50) -> list[dict]:
-        """Get recent uploads."""
+        """Get recent uploads with explicit status synthesis."""
         with self._conn() as conn:
             cursor = conn.execute(
-                """SELECT u.*, c.title, c.streamer_name, c.platform, c.thumbnail_path
+                """SELECT u.*,
+                          CASE WHEN u.success = 1 THEN 'uploaded' ELSE 'failed' END AS status,
+                          c.title, c.streamer_name, c.platform, c.thumbnail_path
                    FROM uploads u LEFT JOIN clips c ON u.clip_id = c.clip_id
                    ORDER BY u.uploaded_at DESC LIMIT ?""",
                 (limit,),
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def count_uploads_today(self) -> int:
-        """Count successful uploads in the last 24 hours."""
+    def count_uploads_today(self, account_id: Optional[str] = None) -> int:
+        """Count successful uploads in the last 24 hours, optionally filtered by account_id."""
         cutoff = time.time() - 86400
         with self._conn() as conn:
-            cursor = conn.execute(
-                "SELECT COUNT(*) FROM uploads WHERE success = 1 AND uploaded_at >= ?",
-                (cutoff,),
-            )
+            if account_id:
+                cursor = conn.execute(
+                    """SELECT COUNT(*) FROM uploads
+                       WHERE success = 1 AND uploaded_at >= ?
+                       AND (account_id = ? OR (account_id IS NULL AND ? = 'account1'))""",
+                    (cutoff, account_id, account_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM uploads WHERE success = 1 AND uploaded_at >= ?",
+                    (cutoff,),
+                )
             return cursor.fetchone()[0]
 
     # ── Jobs ────────────────────────────────────────────────────────────────
@@ -539,18 +609,32 @@ class Database:
         priority: int = 5,
         scheduled_for: Optional[float] = None,
     ) -> int:
-        """Create a new job in the queue."""
+        """Create a new job in the queue. Enforces max_retries=1 and deduplication for uploads."""
         now = time.time()
         status = JobStatus.SCHEDULED if scheduled_for else JobStatus.PENDING
 
         with self._conn() as conn:
+            # Prevent duplicate upload jobs for the same clip
+            if job_type == "upload" and clip_id:
+                existing = conn.execute(
+                    """SELECT id FROM jobs
+                       WHERE job_type = 'upload' AND clip_id = ?
+                       AND status IN ('pending', 'processing', 'completed')""",
+                    (clip_id,),
+                ).fetchone()
+                if existing:
+                    logger.info("Upload job already exists for clip %s (job #%d) — skipping duplicate", clip_id, existing[0])
+                    return existing[0]
+
+            max_retries = 1 if job_type == "upload" else 3
+
             cursor = conn.execute(
                 """INSERT INTO jobs
-                   (job_type, clip_id, status, priority, payload, created_at, scheduled_for)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   (job_type, clip_id, status, priority, payload, created_at, scheduled_for, max_retries)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     job_type, clip_id, status, priority,
-                    json.dumps(payload or {}), now, scheduled_for,
+                    json.dumps(payload or {}), now, scheduled_for, max_retries,
                 ),
             )
             return cursor.lastrowid

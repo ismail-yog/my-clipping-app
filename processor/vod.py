@@ -53,7 +53,7 @@ def _get_video_duration(path: Path) -> float:
         return 0.0
 
 
-from processor.captions_engine import CaptionsEngine, SubtitleStyle
+from processor.captions_engine import CaptionsEngine, SubtitleStyle, normalize_subtitle_style
 
 class VODClipper(Clipper):
     """Custom Clipper subclass for VOD processing with multi-style animated subtitle engine."""
@@ -61,10 +61,7 @@ class VODClipper(Clipper):
     def __init__(self, settings=None, subtitle_style: str = "hormozi"):
         super().__init__(settings)
         self.current_start_offset_ms: int = 0
-        try:
-            self.subtitle_style = SubtitleStyle(subtitle_style.lower())
-        except Exception:
-            self.subtitle_style = SubtitleStyle.HORMOZI
+        self.subtitle_style = normalize_subtitle_style(subtitle_style)
         self.captions_engine = CaptionsEngine(default_style=self.subtitle_style)
 
     def _generate_ass_captions(self, clip_id: str, transcript_segments: list, base_offset_ms: int = 0) -> Optional[Path]:
@@ -201,13 +198,41 @@ class VODProcessor:
             with self._lock:
                 self.active_processes.discard(proc)
 
-    def process_url(self, url: str, job_id: str = "", layout_type: str = "gamer") -> bool:
+    @staticmethod
+    def _detect_streamer_and_platform(url: str) -> Tuple[str, str]:
+        """Detect streamer channel name and broadcast platform from URL."""
+        clean_url = str(url or "").strip()
+        lower_url = clean_url.lower()
+        if "kick.com/" in lower_url:
+            parts = lower_url.split("kick.com/")[1].split("/")[0].split("?")[0]
+            name = parts.strip()
+            return (name if name else "Streamer"), "kick"
+        if "twitch.tv/" in lower_url:
+            parts = lower_url.split("twitch.tv/")[1].split("/")[0].split("?")[0]
+            name = parts.strip()
+            return (name if name else "Streamer"), "twitch"
+        if "youtube.com/" in lower_url or "youtu.be/" in lower_url:
+            if "@" in lower_url:
+                parts = lower_url.split("@")[1].split("/")[0].split("?")[0]
+                name = parts.strip()
+                return (name if name else "Creator"), "youtube"
+            return "Creator", "youtube"
+        if "tiktok.com/" in lower_url:
+            if "@" in lower_url:
+                parts = lower_url.split("@")[1].split("/")[0].split("?")[0]
+                name = parts.strip()
+                return (name if name else "Creator"), "tiktok"
+            return "Creator", "tiktok"
+        return "Streamer", "custom"
+
+    def process_url(self, url: str, job_id: str = "", layout_type: str = "gamer", subtitle_style: str = "hormozi") -> bool:
         """Process URL to extract viral clips."""
         if job_id:
             with ACTIVE_PROCESSORS_LOCK:
                 ACTIVE_PROCESSORS[job_id] = self
 
         self._current_vid = str(uuid.uuid4())[:8]
+        detected_streamer, detected_platform = self._detect_streamer_and_platform(url)
 
         def progress(pct: int, msg: str):
             if job_id:
@@ -235,29 +260,47 @@ class VODProcessor:
                 self._current_segments = self._create_fallback_segments(duration)
 
             # ── 3. FIND VIRAL MOMENTS ───────────────────────────────────────────
-            progress(55, "Analyzing transcripts and identifying viral highlights...")
-            timestamps = self._find_viral_moments(self._current_segments, duration=duration)
-            if not timestamps:
-                timestamps = [0.0]
+            progress(55, "Analyzing transcripts with HookScorer (virality >= 65%)...")
+            candidates = self._find_viral_moments(self._current_segments, duration=duration)
+            if not candidates:
+                logger.info("No moments in VOD reached >= 0.65 viral score. Dumping all sub-65% content.")
+                progress(100, "Done! No clips met the >= 65% viral threshold (sub-65% moments dumped).")
+                return True
 
-            logger.info("Found %d viral timestamps: %s", len(timestamps), timestamps)
+            logger.info("Found %d viral candidate moments (>= 65%% score)", len(candidates))
 
             # ── 4. EXTRACT CLIPS (Parallel renders) ─────────────────────────────
-            progress(65, f"Extracting and rendering {len(timestamps)} clips in parallel...")
-            clips = self._cut_clips_parallel(video_path, timestamps, layout_type, total_duration=duration)
+            progress(65, f"Extracting and rendering {len(candidates)} clips in parallel...")
+            clips = self._cut_clips_parallel(
+                video_path,
+                candidates,
+                layout_type,
+                total_duration=duration,
+                subtitle_style=subtitle_style,
+                streamer_name=detected_streamer,
+                platform=detected_platform,
+            )
 
             if not clips:
-                progress(0, "Clip rendering produced 0 clips")
-                return False
+                progress(100, "No clips met the >= 65% viral threshold (all dumped).")
+                return True
 
             # ── 5. SAVE AND ORCHESTRATE SEO / UPLOADS ───────────────────────────
             success_count = 0
             for clip in clips:
-                auto_approve = clip.moment_score >= 0.8
-                self.db.save_clip(
+                if clip.moment_score < 0.65:
+                    logger.info("🗑️ VOD clip %s score %.2f < 0.65 — dumping immediately", clip.clip_id, clip.moment_score)
+                    try:
+                        safe_unlink(Path(clip.clip_path))
+                    except Exception:
+                        pass
+                    continue
+
+                auto_approve = clip.moment_score >= 0.65
+                saved_id = self.db.save_clip(
                     clip_id=clip.clip_id,
-                    streamer_name="VOD_Clipper",
-                    platform="custom",
+                    streamer_name=detected_streamer,
+                    platform=detected_platform,
                     clip_path=clip.clip_path,
                     duration=clip.duration,
                     moment_score=clip.moment_score,
@@ -266,36 +309,63 @@ class VODProcessor:
                     has_captions=clip.has_captions,
                     auto_approve=auto_approve,
                 )
+                if not saved_id:
+                    logger.info("Clip %s refused by database — dumping immediately", clip.clip_id)
+                    try:
+                        safe_unlink(Path(clip.clip_path))
+                    except Exception:
+                        pass
+                    continue
 
                 try:
                     from processor.seo import SEOGenerator
                     seo_gen = SEOGenerator()
                     seo_meta = seo_gen.generate(
                         transcript=clip.transcript,
-                        streamer_name="VOD_Clipper",
+                        streamer_name=detected_streamer,
                         emotion=clip.emotion,
-                        platform="custom",
+                        platform=detected_platform,
                     )
+                    final_title = clip.title or seo_meta.title
+                    final_hook = seo_meta.hook_text or final_title
                 except Exception as e:
                     logger.error("SEO Generator failed: %s", e)
                     from processor.seo import SEOMetadata
+                    final_title = clip.title or self._generate_title(clip.transcript, clip.emotion)
+                    final_hook = final_title
                     seo_meta = SEOMetadata(
-                        title=self._generate_title(clip.transcript, clip.emotion),
+                        title=final_title,
                         description=clip.transcript[:200],
                         tags=["shorts", "viral", "clips", clip.emotion],
-                        hook_text=self._generate_title(clip.transcript, clip.emotion),
+                        hook_text=final_hook,
                         thumbnail_prompt="",
                         generated_by="template",
                     )
 
                 self.db.update_clip_seo(
                     clip_id=clip.clip_id,
-                    title=seo_meta.title,
+                    title=final_title,
                     description=seo_meta.description,
                     tags=seo_meta.tags,
-                    hook_text=seo_meta.hook_text,
+                    hook_text=final_hook,
                     seo_method=seo_meta.generated_by,
                 )
+
+                try:
+                    from processor.hook import HookOverlayRenderer
+                    hook_renderer = HookOverlayRenderer()
+                    hook_res = hook_renderer.apply(
+                        clip_path=Path(clip.clip_path),
+                        hook_text=final_hook,
+                        watermark_text=f"@{detected_streamer}",
+                        layout_type=layout_type,
+                        streamer_name=detected_streamer,
+                        platform=detected_platform,
+                    )
+                    if hook_res:
+                        self.db.update_clip_hook(clip.clip_id, has_hook=True)
+                except Exception as hook_exc:
+                    logger.warning("VOD hook overlay failed (non-fatal): %s", hook_exc)
 
                 thumbnail_path = ""
                 try:
@@ -312,6 +382,13 @@ class VODProcessor:
                     logger.error("Failed to generate thumbnail for VOD clip: %s", e)
 
                 if auto_approve and self.task_queue:
+                    delay_sec = 0.0
+                    try:
+                        from processor.scheduler import calculate_next_upload_delay
+                        delay_sec = calculate_next_upload_delay(self.db)
+                    except Exception as exc:
+                        logger.warning("Failed to calculate upload schedule delay: %s", exc)
+
                     self.task_queue.submit(
                         job_type="upload",
                         clip_id=clip.clip_id,
@@ -323,8 +400,9 @@ class VODProcessor:
                             "thumbnail_path": thumbnail_path,
                         },
                         priority=3,
+                        delay_seconds=delay_sec,
                     )
-                    logger.info("🔥 High viral score (%.2f) — VOD clip %s queued for auto-upload", clip.moment_score, clip.clip_id)
+                    logger.info("🔥 High viral score (%.2f) — VOD clip %s queued for upload (delay: %.1fs)", clip.moment_score, clip.clip_id, delay_sec)
 
                 success_count += 1
 
@@ -555,105 +633,89 @@ class VODProcessor:
             free_vram()
             safe_unlink(audio_path)
 
-    def _find_viral_moments(self, transcript: list[TranscriptSegment], duration: float = 0.0) -> list[float]:
-        """Score each 30-second window and return top N timestamps with millisecond precision."""
+    def _find_viral_moments(self, transcript: list[TranscriptSegment], duration: float = 0.0) -> list:
+        """Score transcript with HookScorer (LLM + semantic virality engine) and return top candidates."""
         if not transcript:
-            return [0.0]
+            return []
 
-        hype_words = [
-            "insane", "crazy", "wtf", "omg", "lol", "lmao", "no way", "unbelievable", "huge", "shocking",
-            "screaming", "died", "ruined", "secret", "never", "finally", "broke", "scared", "impossible",
-            "win", "clutch", "epic", "perfect", "destroy", "rage", "crying", "hacker", "aimbot", "glitch",
-            "broken", "holy",
-        ]
+        from processor.hook_scorer import HookScorer, HookCandidate
+        hook_scorer = HookScorer(min_hook_score=65)
+        candidates = hook_scorer.score_transcript(
+            transcript_segments=transcript,
+            streamer_name="VOD_Clipper",
+            window_sec=getattr(config.vod_settings, "clip_duration", 35) or 35,
+            step_sec=15
+        )
 
-        scored_windows = []
-        self._timestamp_scores = {}
-        self._timestamp_emotions = {}
-
-        for seg in transcript:
-            start_ms = seconds_to_ms(seg.start)
-            end_ms = start_ms + 30000
-
-            win_segs = [s for s in transcript if seconds_to_ms(s.start) >= start_ms and seconds_to_ms(s.start) < end_ms]
-            if not win_segs:
-                continue
-
-            text = " ".join(s.text for s in win_segs)
-            text_lower = text.lower()
-
-            score = 0.0
-            for word in hype_words:
-                score += text_lower.count(word) * 1.5
-
-            score += text.count("!") * 1.0
-
-            words = text.split()
-            caps_words = sum(1 for w in words if w.isupper() and len(w) > 2)
-            score += caps_words * 0.5
-
-            dur_sec = max((end_ms - start_ms) / 1000.0, 1.0)
-            wps = len(words) / dur_sec
-            wps_score = min(1.0, wps / 4.0)
-            score += wps_score * 2.0
-
-            normalized_score = round(min(1.0, max(0.3, score / 10.0)), 3)
-
-            if wps > 3.0:
-                emotion = "surprise"
-            elif len(words) > 15:
-                emotion = "joy"
-            else:
-                emotion = "neutral"
-
-            start_sec = start_ms / 1000.0
-            scored_windows.append((start_sec, normalized_score, emotion))
-
-        scored_windows.sort(key=lambda x: x[1], reverse=True)
-
+        # Strictly enforce >= 65% viral threshold
+        candidates = [c for c in candidates if c.hook_score >= 65]
         max_clips = config.vod_settings.max_clips
-        selected_timestamps = []
-        for ts, score, emotion in scored_windows:
-            if len(selected_timestamps) >= max_clips:
-                break
+        selected = candidates[:max_clips]
 
-            overlap = any(abs(seconds_to_ms(ts) - seconds_to_ms(sel)) < 30000 for sel in selected_timestamps)
-            if not overlap:
-                selected_timestamps.append(ts)
-                self._timestamp_scores[ts] = score
-                self._timestamp_emotions[ts] = emotion
+        if not selected:
+            logger.info("No moments in VOD achieved >= 0.65 viral score — zero clips will be created")
+            return []
 
-        # Guaranteed fallback if no moment was scored
-        if not selected_timestamps:
-            selected_timestamps = [0.0]
-            self._timestamp_scores[0.0] = 0.85
-            self._timestamp_emotions[0.0] = "joy"
-
-        return selected_timestamps
+        return selected
 
     def _cut_clips_parallel(
         self,
         video_path: Path,
-        timestamps: list[float],
+        items: list,
         layout_type: str,
         total_duration: float = 0.0,
+        subtitle_style: str = "hormozi",
+        streamer_name: str = "Streamer",
+        platform: str = "custom",
     ) -> list[ClipMetadata]:
         """Cut clips in parallel using ThreadPoolExecutor and Clipper with millisecond offsets."""
-        clipper = VODClipper()
+        clipper = VODClipper(subtitle_style=subtitle_style)
         results: list[ClipMetadata] = []
-        lock = threading.Lock()
-        configured_duration = config.vod_settings.clip_duration
+        results_lock = threading.Lock()
+        configured_duration = max(30, min(45, int(config.vod_settings.clip_duration)))
 
-        def extract_one(i: int, ts: float) -> Optional[ClipMetadata]:
+        def extract_one(i: int, item: Any) -> Optional[ClipMetadata]:
             if self.cancelled:
                 return None
             clip_id = f"vod_{self._current_vid}_{i}"
-            ts_ms = seconds_to_ms(ts)
+
+            from processor.hook_scorer import HookCandidate
+            if isinstance(item, HookCandidate):
+                ts = float(item.start_ms / 1000.0)
+                ts_ms = item.start_ms
+                actual_duration = item.duration_sec
+                score = round(item.hook_score / 100.0, 3)
+                hook_title = item.title
+                hook_text = item.hook_text
+                emotion = "joy"
+            else:
+                ts = float(item)
+                ts_ms = seconds_to_ms(ts)
+                target_ms = seconds_to_ms(configured_duration)
+                min_ms = 30000
+                max_ms = 45000
+                chosen_dur_ms = target_ms
+                if self._current_segments:
+                    valid_ends = [
+                        seconds_to_ms(s.end) - ts_ms
+                        for s in self._current_segments
+                        if min_ms <= (seconds_to_ms(s.end) - ts_ms) <= max_ms
+                    ]
+                    if valid_ends:
+                        chosen_dur_ms = valid_ends[-1]
+                actual_duration = float(chosen_dur_ms / 1000.0)
+                score = self._timestamp_scores.get(ts, 0.85)
+                emotion = self._timestamp_emotions.get(ts, "joy")
+                hook_title = self._generate_title("", emotion)
+                hook_text = "WAIT FOR IT 💀"
+
+            # Enforce strictly 30-45s clip duration
+            actual_duration = max(30.0, min(45.0, actual_duration))
 
             # Adjust duration if video is shorter than configured duration
-            actual_duration = configured_duration
-            if total_duration > 0 and (ts + configured_duration) > total_duration:
-                actual_duration = max(5.0, total_duration - ts)
+            if total_duration > 0 and (ts + actual_duration) > total_duration:
+                remaining = total_duration - ts
+                actual_duration = max(30.0, remaining) if remaining >= 30.0 else max(5.0, remaining)
 
             clip_dur_ms = seconds_to_ms(actual_duration)
 
@@ -664,15 +726,14 @@ class VODProcessor:
                     if seconds_to_ms(s.start) >= ts_ms and seconds_to_ms(s.end) <= ts_ms + clip_dur_ms
                 ]
 
-            score = self._timestamp_scores.get(ts, 0.85)
-            emotion = self._timestamp_emotions.get(ts, "joy")
-
             clipper.current_start_offset_ms = ts_ms
 
             try:
+                from config import StreamerConfig
+                s_cfg = StreamerConfig(name=streamer_name, platform=platform, channel=streamer_name, url="")
                 metadata = clipper.create_clip(
                     source_video=video_path,
-                    streamer=None,
+                    streamer=s_cfg,
                     start_offset=ts,
                     duration=actual_duration,
                     moment_score=score,
@@ -680,17 +741,21 @@ class VODProcessor:
                     emotion=emotion,
                     custom_clip_id=clip_id,
                     layout_type=layout_type,
+                    subtitle_style=subtitle_style,
                 )
                 if metadata:
+                    metadata.title = hook_title
                     output_path = Path(metadata.clip_path)
                     try:
                         from processor.hook import HookOverlayRenderer
                         hook_renderer = HookOverlayRenderer()
-                        title = self._generate_title(metadata.transcript or "VIRAL MOMENT", emotion)
                         hooked_output = hook_renderer.apply(
                             clip_path=output_path,
-                            hook_text=title,
-                            watermark_text="@StreamClipper",
+                            hook_text=hook_text or hook_title,
+                            watermark_text=f"@{streamer_name}",
+                            layout_type=layout_type,
+                            streamer_name=streamer_name,
+                            platform=platform,
                         )
                         if hooked_output:
                             metadata.clip_path = str(hooked_output)
@@ -704,13 +769,13 @@ class VODProcessor:
 
         parallel_renders = config.vod_settings.parallel_renders
         with ThreadPoolExecutor(max_workers=parallel_renders) as executor:
-            futures = {executor.submit(extract_one, i, ts): ts for i, ts in enumerate(timestamps)}
+            futures = {executor.submit(extract_one, i, item): item for i, item in enumerate(items)}
             for future in as_completed(futures):
                 if self.cancelled:
                     break
                 meta = future.result()
                 if meta:
-                    with lock:
+                    with results_lock:
                         results.append(meta)
 
         return results
@@ -729,20 +794,30 @@ class VODProcessor:
         return segs
 
     def _generate_title(self, transcript: str, emotion: str) -> str:
-        """Generate a quick title from transcript."""
-        words = transcript.split()
-        if len(words) <= 5:
-            return transcript.strip().upper() or "VIRAL MOMENT"
+        """Generate a high-CTR, modern Gen-Z title directly from speech context."""
+        words = [w for w in transcript.strip().split() if w]
+        snippet = " ".join(words[:6]).strip('",.?!')
+        
+        if len(words) >= 3 and len(snippet) > 6:
+            snip_lower = snippet.lower()
+            if any(k in snip_lower for k in ["i ", "my ", "me ", "we "]):
+                return f"bro really said \"{snip_lower}\" 💀"[:75]
+            elif emotion in ("surprise", "fear"):
+                return f"ain't no way {snip_lower} 😭"[:75]
+            elif emotion in ("anger", "rage"):
+                return f"nah he actually lost it over this 💀"[:75]
+            elif emotion in ("joy", "win"):
+                return f"bro thought he was him 👑"[:75]
+            else:
+                return f"wait for it... \"{snip_lower}\" 💀"[:75]
 
-        fragment = " ".join(words[:8]).strip()
-        if len(fragment) > 60:
-            fragment = fragment[:57] + "..."
-
-        prefixes = {
-            "surprise": "WAIT FOR THIS - ",
-            "joy": "BEST MOMENT - ",
-            "anger": "THIS IS INSANE - ",
-            "neutral": "",
-        }
-        prefix = prefixes.get(emotion, "")
-        return (prefix + fragment).upper()
+        fallbacks = [
+            "bro thought he was him 💀",
+            "ain't no way he did this 😭",
+            "nah chat is cooking him rn 💀",
+            "bro sold the bag so fast 😭",
+            "he was NOT ready for this 💀",
+            "wait till the ending bro i'm crying 😭",
+        ]
+        import random
+        return random.choice(fallbacks)

@@ -92,6 +92,15 @@ class TwitchAPI:
 
     def lookup_user_id(self, login: str) -> Optional[str]:
         """Resolve a Twitch user ID by their login name using Helix /users."""
+        # Sanitize login to valid Twitch username
+        login = login.strip().lower()
+        if "twitch.tv/" in login:
+            login = login.split("twitch.tv/")[-1].split("?")[0].strip("/")
+        login = login.lstrip("@").strip()
+
+        if not login:
+            return None
+
         if login in self._user_id_cache:
             return self._user_id_cache[login]
 
@@ -116,7 +125,13 @@ class TwitchAPI:
 
     def check_stream(self, channel: str) -> tuple[bool, Optional[dict]]:
         """Check if streamer is live using Helix /streams."""
-        user_id = self.lookup_user_id(channel)
+        # Clean channel
+        channel_clean = channel.strip().lower()
+        if "twitch.tv/" in channel_clean:
+            channel_clean = channel_clean.split("twitch.tv/")[-1].split("?")[0].strip("/")
+        channel_clean = channel_clean.lstrip("@").strip()
+
+        user_id = self.lookup_user_id(channel_clean)
         if not user_id:
             return False, None
 
@@ -190,13 +205,21 @@ class KickAPI:
 
     def check_stream(self, channel: str) -> tuple[bool, Optional[dict]]:
         """Check if channel is live using Kick v2 endpoint."""
+        clean_channel = channel.strip().lower()
+        if "kick.com/" in clean_channel:
+            clean_channel = clean_channel.split("kick.com/")[-1].split("?")[0].strip("/")
+        clean_channel = clean_channel.lstrip("@").strip()
+
+        if not clean_channel:
+            return False, None
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                           "AppleWebKit/537.36 (KHTML, like Gecko) "
                           "Chrome/120.0.0.0 Safari/537.36"
         }
         resp = requests.get(
-            f"https://kick.com/api/v2/channels/{channel}",
+            f"https://kick.com/api/v2/channels/{clean_channel}",
             headers=headers,
             timeout=10,
         )
@@ -278,6 +301,50 @@ class StreamMonitor:
         """Get the statuses of only the currently live streamers."""
         with self._lock:
             return [s for s in self._statuses.values() if s.is_live]
+
+    def remove_streamer(self, name: str):
+        """Remove a streamer dynamically from the monitor."""
+        with self._lock:
+            self.streamers = [s for s in self.streamers if s.name.lower() != name.lower()]
+            keys_to_remove = [k for k, v in self._statuses.items() if v.streamer.name.lower() == name.lower()]
+            for k in keys_to_remove:
+                self._statuses.pop(k, None)
+            logger.info("StreamMonitor removed streamer: %s", name)
+
+    def add_or_update_streamer(self, streamer: config.StreamerConfig, check_immediately: bool = True):
+        """Add or update a streamer dynamically and immediately initiate polling."""
+        key = f"{streamer.platform}:{streamer.channel}"
+        with self._lock:
+            # Remove any previous instance of this streamer
+            self.streamers = [
+                s for s in self.streamers
+                if s.name.lower() != streamer.name.lower() and f"{s.platform}:{s.channel}" != key
+            ]
+            self.streamers.append(streamer)
+
+            if key not in self._statuses:
+                self._statuses[key] = StreamStatus(streamer=streamer, stream_url=streamer.url)
+            else:
+                self._statuses[key].streamer = streamer
+                if streamer.url:
+                    self._statuses[key].stream_url = streamer.url
+
+            logger.info("StreamMonitor registered streamer: %s (%s)", streamer.name, key)
+
+        if check_immediately and streamer.enabled and self._running:
+            threading.Thread(
+                target=self._check_streamer_safe,
+                args=(streamer,),
+                daemon=True,
+                name=f"poll-now-{streamer.name}",
+            ).start()
+
+    def _check_streamer_safe(self, streamer: config.StreamerConfig):
+        """Safely execute an immediate status check for a single streamer."""
+        try:
+            self._check_streamer(streamer)
+        except Exception as e:
+            logger.error("Failed immediate status check for %s: %s", streamer.name, e)
 
     def start(self):
         """Start the background polling loop."""

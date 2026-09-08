@@ -24,7 +24,8 @@ _active_jobs: dict[str, str] = {}  # url -> job_id
 
 class VODRequest(BaseModel):
     url: str
-    layout_type: Optional[str] = "gamer"
+    layout_type: Optional[str] = "white_canvas"
+    subtitle_style: Optional[str] = "hormozi"
 
 
 class VODStatusResponse(BaseModel):
@@ -40,7 +41,8 @@ async def process_vod(req: VODRequest):
     Submit a YouTube/video URL for processing via task queue.
     """
     url = req.url.strip()
-    layout_type = req.layout_type or "gamer"
+    layout_type = req.layout_type or "white_canvas"
+    subtitle_style = req.subtitle_style or "hormozi"
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
 
@@ -66,7 +68,7 @@ async def process_vod(req: VODRequest):
     # Submit job to the task queue
     job_id = tq.submit(
         job_type="vod_process",
-        payload={"url": url, "layout_type": layout_type},
+        payload={"url": url, "layout_type": layout_type, "subtitle_style": subtitle_style},
         priority=1,
     )
 

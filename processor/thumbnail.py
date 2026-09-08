@@ -23,8 +23,8 @@ class ThumbnailGenerator:
 
     def __init__(self):
         # Read settings from config.thumbnail_settings
-        self.width = getattr(config.thumbnail_settings, "width", 1280)
-        self.height = getattr(config.thumbnail_settings, "height", 720)
+        self.width = getattr(config.thumbnail_settings, "width", 720)
+        self.height = getattr(config.thumbnail_settings, "height", 1280)
         self.quality = getattr(config.thumbnail_settings, "quality", 90)
         self.frame_timestamp = getattr(config.thumbnail_settings, "frame_timestamp", 1.5)
 
@@ -80,43 +80,49 @@ class ThumbnailGenerator:
             return False
 
     def _add_text_overlay(self, image_path: Path, text: str, streamer_name: str, output_path: Path) -> Optional[Path]:
-        """Open the frame image, resize, apply dark gradient, write stroke/shadow text, enhance colors, and save."""
+        """Open the frame image, resize proportionally into 9:16, apply dark gradient, write stroke/shadow text, enhance colors, and save."""
         try:
+            from PIL import ImageOps
             img = Image.open(image_path).convert("RGB")
             
-            # Resize to target resolution (1280x720) if needed
-            if img.size != (self.width, self.height):
-                img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
+            # Target 9:16 portrait resolution
+            target_w = 720
+            target_h = 1280
+
+            # Scale and center-crop proportionally without stretching or contracting
+            img = ImageOps.fit(img, (target_w, target_h), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
 
             # Create gradient overlay for text readability
-            gradient = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
+            gradient = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
             g_draw = ImageDraw.Draw(gradient)
             
-            # Subtle top gradient
-            for y in range(200):
-                alpha = int(120 * (1.0 - (y / 200.0)))
-                g_draw.line([(0, y), (self.width, y)], fill=(0, 0, 0, alpha))
+            # Subtle top gradient for hook text
+            for y in range(260):
+                alpha = int(140 * (1.0 - (y / 260.0)))
+                g_draw.line([(0, y), (target_w, y)], fill=(0, 0, 0, alpha))
                 
             # Subtle bottom gradient
-            for y in range(self.height - 200, self.height):
-                alpha = int(120 * ((y - (self.height - 200)) / 200.0))
-                g_draw.line([(0, y), (self.width, y)], fill=(0, 0, 0, alpha))
+            for y in range(target_h - 220, target_h):
+                alpha = int(140 * ((y - (target_h - 220)) / 220.0))
+                g_draw.line([(0, y), (target_w, y)], fill=(0, 0, 0, alpha))
 
             # Composite the gradient box
             img = Image.alpha_composite(img.convert("RGBA"), gradient).convert("RGB")
             draw = ImageDraw.Draw(img)
 
             # Load Arial bold or fallback
-            title_font = self._get_font(size=60, bold=True)
-            name_font = self._get_font(size=32, bold=True)
+            title_font = self._get_font(size=46, bold=True)
+            name_font = self._get_font(size=28, bold=True)
 
-            # 1. Draw Title Text (centered at top, 60pt bold, white, 4px black stroke, shadow)
+            # 1. Draw Title Text (centered near top, white with black stroke)
             title_str = text.strip().upper()
+            if len(title_str) > 42:
+                title_str = title_str[:39] + "..."
             bbox = draw.textbbox((0, 0), title_str, font=title_font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
-            title_x = (self.width - text_w) // 2
-            title_y = 60
+            title_x = max(20, (target_w - text_w) // 2)
+            title_y = 90
 
             # Draw shadow first
             draw.text(
@@ -137,21 +143,21 @@ class ThumbnailGenerator:
                 stroke_fill="black"
             )
 
-            # 2. Draw Streamer Name (bottom-right, 32pt, white, 2px black stroke)
+            # 2. Draw Streamer Name (bottom-right, white with black stroke)
             if streamer_name:
                 name_str = f"@{streamer_name.strip()}"
                 n_bbox = draw.textbbox((0, 0), name_str, font=name_font)
                 n_w = n_bbox[2] - n_bbox[0]
                 n_h = n_bbox[3] - n_bbox[1]
-                name_x = self.width - n_w - 40
-                name_y = self.height - n_h - 40
+                name_x = target_w - n_w - 30
+                name_y = target_h - n_h - 40
 
                 draw.text(
                     (name_x, name_y),
                     name_str,
                     font=name_font,
                     fill="white",
-                    stroke_width=2,
+                    stroke_width=3,
                     stroke_fill="black"
                 )
 

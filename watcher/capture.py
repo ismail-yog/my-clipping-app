@@ -160,42 +160,48 @@ class StreamCapture:
             ]
 
             logger.info("[%s] Segmenting stream into buffer...", self.streamer.name)
+            ffmpeg_log_path = self._buffer_dir / "ffmpeg_capture.log"
             try:
-                proc = subprocess.Popen(
-                    ffmpeg_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
+                with open(ffmpeg_log_path, "ab") as log_file:
+                    proc = subprocess.Popen(
+                        ffmpeg_cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=log_file,
+                    )
 
-                while True:
-                    with self._lock:
-                        if not self._running:
+                    while True:
+                        with self._lock:
+                            if not self._running:
+                                break
+                        # If ffmpeg terminated or crashed, break to restart
+                        if proc.poll() is not None:
                             break
-                    # If ffmpeg terminated or crashed, break to restart
-                    if proc.poll() is not None:
-                        break
-                    time.sleep(1)
+                        time.sleep(1)
 
-                # Cleanup processes on loop break or stop
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                else:
-                    ret = proc.returncode
-                    if ret != 0:
-                        stderr = ""
-                        if proc.stderr:
-                            stderr = proc.stderr.read().decode("utf-8", errors="replace")[-300:]
-                        logger.error(
-                            "[%s] FFmpeg crashed with exit code %d. Error: %s",
-                            self.streamer.name,
-                            ret,
-                            stderr,
-                        )
-                        logger.info("[%s] Restarting capture from current time...", self.streamer.name)
+                    # Cleanup processes on loop break or stop
+                    if proc.poll() is None:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                    else:
+                        ret = proc.returncode
+                        if ret != 0:
+                            stderr = ""
+                            try:
+                                if ffmpeg_log_path.exists():
+                                    with open(ffmpeg_log_path, "r", encoding="utf-8", errors="replace") as rf:
+                                        stderr = rf.read()[-300:]
+                            except Exception:
+                                pass
+                            logger.error(
+                                "[%s] FFmpeg crashed with exit code %d. Error: %s",
+                                self.streamer.name,
+                                ret,
+                                stderr,
+                            )
+                            logger.info("[%s] Restarting capture from current time...", self.streamer.name)
             except Exception as e:
                 logger.error("[%s] Exception in capture execution: %s", self.streamer.name, e)
                 time.sleep(2)
@@ -315,17 +321,30 @@ class StreamCapture:
             return None
 
     def _get_stream_url(self) -> Optional[str]:
-        """Query streamlink to resolve the live stream HLS manifest URL."""
-        cmd = ["streamlink", "--get-url", self.streamer.url, self.settings.stream_quality]
+        """Query streamlink (with yt-dlp fallback) to resolve the live stream HLS manifest URL."""
+        quality = f"{self.settings.stream_quality},1080p,720p60,720p,best" if self.settings.stream_quality else "best"
+        cmd = ["streamlink", "--stream-url", self.streamer.url, quality]
         try:
-            res = run_command_safely(cmd, timeout=20.0, check=False)
+            res = run_command_safely(cmd, timeout=25.0, check=False)
             if res.returncode == 0:
                 url = res.stdout.strip()
                 if url.startswith("http"):
                     return url
-            logger.debug("[%s] Streamlink get-url stderr: %s", self.streamer.name, res.stderr)
+            logger.debug("[%s] Streamlink error: %s", self.streamer.name, res.stderr)
         except Exception as e:
-            logger.error("[%s] Exception querying streamlink: %s", self.streamer.name, e)
+            logger.debug("[%s] Exception querying streamlink: %s", self.streamer.name, e)
+
+        # Secondary fallback: yt-dlp
+        try:
+            yt_cmd = ["yt-dlp", "-g", "-f", "best", self.streamer.url]
+            res = run_command_safely(yt_cmd, timeout=25.0, check=False)
+            if res.returncode == 0:
+                url = res.stdout.strip()
+                if url.startswith("http"):
+                    return url
+        except Exception as e:
+            logger.debug("[%s] yt-dlp fallback error: %s", self.streamer.name, e)
+
         return None
 
     def _cleanup_loop(self):

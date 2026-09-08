@@ -100,16 +100,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS setup matching specifications
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8420"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 # ── Middleware (Request Logging and Error Handling) ─────────────────────────
 
 @app.middleware("http")
@@ -137,10 +127,35 @@ async def log_requests_and_errors(request: Request, call_next):
             process_time,
             exc_info=True
         )
+        origin = request.headers.get("origin") or "*"
         return JSONResponse(
             status_code=500,
-            content={"detail": "An internal server error occurred.", "error": str(e)}
+            content={"detail": "An internal server error occurred.", "error": str(e)},
+            headers={
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+            },
         )
+
+
+# CORS setup — registered after http middleware so it wraps outermost
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8420",
+        "http://127.0.0.1:8420",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ],
+    allow_origin_regex=r"^https?://.*$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ── System Endpoints ────────────────────────────────────────────────────────

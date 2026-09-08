@@ -1,0 +1,244 @@
+<!DOCTYPE html><html lang="en" style="width: 1280px; height: 1056px; overflow: hidden; position: relative;"><head><meta charset="utf-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><style>@layer base{html,body{margin:0;padding:0;background-color:#111319;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}.ambient-bg{position:fixed;top:0;left:0;right:0;bottom:0;z-index:-1;background:radial-gradient(circle at 20% 30%,rgba(192,193,255,0.05) 0%,transparent 40%),radial-gradient(circle at 80% 70%,rgba(247,81,161,0.05) 0%,transparent 40%);background-color:#111319;}.cyber-grid{position:fixed;top:0;left:0;right:0;bottom:0;z-index:-1;background-image:linear-gradient(rgba(255,255,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.02) 1px,transparent 1px);background-size:40px 40px;}.pulse-green{box-shadow:0 0 0 0 rgba(16,185,129,0.7);animation:pulse 2s infinite;}@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(16,185,129,0.7);}70%{box-shadow:0 0 0 10px rgba(16,185,129,0);}100%{box-shadow:0 0 0 0 rgba(16,185,129,0);}}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{"colors":{"secondary-fixed-dim":"#ddb7ff","surface-dim":"#111319","on-surface":"#e2e2ea","on-primary-fixed-variant":"#2f2ebe","surface-container-low":"#191c21","tertiary":"#ffb0cd","secondary-fixed":"#f0dbff","on-tertiary-container":"#570032","on-error-container":"#ffdad6","primary-container":"#8083ff","outline":"#908fa0","error":"#ffb4ab","on-tertiary-fixed-variant":"#8c0053","on-primary-container":"#0d0096","error-container":"#93000a","surface-container-lowest":"#0c0e13","on-tertiary-fixed":"#3e0022","outline-variant":"#464554","primary-fixed-dim":"#c0c1ff","on-secondary-container":"#d6a9ff","on-primary-fixed":"#07006c","primary-fixed":"#e1e0ff","secondary-container":"#6f00be","surface-bright":"#37393f","on-secondary-fixed":"#2c0051","surface-variant":"#33353b","inverse-primary":"#494bd6","inverse-surface":"#e2e2ea","secondary":"#ddb7ff","background":"#111319","on-secondary":"#490080","inverse-on-surface":"#2e3036","surface-container":"#1d2025","on-error":"#690005","primary":"#c0c1ff","tertiary-fixed-dim":"#ffb0cd","surface-container-high":"#282a30","surface":"#111319","tertiary-fixed":"#ffd9e4","on-tertiary":"#640039","surface-tint":"#c0c1ff","on-secondary-fixed-variant":"#6900b3","on-surface-variant":"#c7c4d7","on-background":"#e2e2ea","tertiary-container":"#f751a1","on-primary":"#1000a9","surface-container-highest":"#33353b"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"gutter":"20px","sm":"8px","xs":"4px","margin-desktop":"64px","md":"16px","unit":"4px","lg":"24px","margin-mobile":"16px","xl":"48px"},"fontFamily":{"body-lg":["Geist"],"label-mono":["JetBrains Mono"],"headline-lg":["Geist"],"headline-lg-mobile":["Geist"],"label-code":["JetBrains Mono"],"headline-md":["Geist"],"body-md":["Geist"],"headline-xl":["Geist"],"body-sm":["Geist"]},"fontSize":{"body-lg":["18px",{"lineHeight":"28px","fontWeight":"400"}],"label-mono":["13px",{"lineHeight":"16px","letterSpacing":"0.05em","fontWeight":"500"}],"headline-lg":["32px",{"lineHeight":"40px","letterSpacing":"-0.01em","fontWeight":"600"}],"headline-lg-mobile":["28px",{"lineHeight":"34px","fontWeight":"700"}],"label-code":["11px",{"lineHeight":"14px","fontWeight":"400"}],"headline-md":["24px",{"lineHeight":"32px","fontWeight":"600"}],"body-md":["16px",{"lineHeight":"24px","fontWeight":"400"}],"headline-xl":["48px",{"lineHeight":"56px","letterSpacing":"-0.02em","fontWeight":"700"}],"body-sm":["14px",{"lineHeight":"20px","fontWeight":"400"}]}}}}</script><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&amp;family=JetBrains+Mono:wght@100..900&amp;display=swap" rel="stylesheet"></head><body class="bg-background font-body-md text-on-background"><div class="ambient-bg"></div><div class="cyber-grid"></div><aside class="fixed left-0 top-0 h-full w-[280px] bg-white/[0.03] backdrop-blur-xl border-r border-white/[0.08] z-50 flex flex-col pt-lg pb-lg transition-all duration-300"><div class="px-lg mb-xl flex items-center gap-sm"><div class="w-10 h-10 bg-gradient-to-tr from-primary to-tertiary rounded-lg flex items-center justify-center"><span class="material-symbols-outlined text-on-primary">bolt</span></div><span class="font-headline-md text-headline-md text-on-surface tracking-tight">SYNCKLIP</span></div><nav class="flex-1 px-md space-y-xs" data-active-classes="bg-primary-container text-on-primary-container font-semibold"><a aria-current="page" class="flex items-center px-md py-sm rounded-lg transition-all gap-md bg-primary-container text-on-primary-container font-semibold" data-path="dashboard" href="#"><span class="material-symbols-outlined">dashboard</span>Dashboard</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="clip-studio" href="#"><span class="material-symbols-outlined">movie_edit</span>Clip Studio</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="streamers" href="#"><span class="material-symbols-outlined">sensors</span>Streamers</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="pipeline" href="#"><span class="material-symbols-outlined">account_tree</span>Autonomous&nbsp; clipper</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="clip-vault" href="#"><span class="material-symbols-outlined">inventory_2</span>Clip Vault</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="distribution" href="#"><span class="material-symbols-outlined">cloud_upload</span>Distribution</a><a class="flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-white/[0.06] hover:text-on-surface transition-all gap-md font-body-md" data-path="settings" href="#"><span class="material-symbols-outlined">settings</span>Settings</a></nav><div class="px-lg pt-lg border-t border-white/[0.08]"><div class="bg-black/20 rounded-xl p-md border border-white/[0.05]"><div class="flex items-center justify-between mb-xs"><span class="text-label-mono font-label-mono text-on-surface-variant">GPU VRAM</span><span class="text-label-mono font-label-mono text-primary">16GB</span></div><div class="w-full h-1 bg-surface-container-highest rounded-full overflow-hidden"><div class="w-3/4 h-full bg-gradient-to-r from-primary to-secondary"></div></div><div class="mt-sm flex items-center gap-xs"><span class="w-2 h-2 rounded-full bg-secondary-fixed pulse-green"></span><span class="text-label-code font-label-code text-on-surface-variant uppercase">CFR 60fps Stable</span></div></div></div></aside><div class="pl-[280px]"><header class="fixed top-0 left-[280px] right-0 h-16 bg-surface/40 backdrop-blur-xl border-b border-white/[0.08] z-40 flex items-center justify-between px-lg"><div class="flex items-center gap-md"><div class="px-sm py-xs bg-black/20 rounded-full border border-white/10 flex items-center gap-xs"><span class="w-1.5 h-1.5 rounded-full bg-green-500 pulse-green"></span><span class="font-label-code text-label-code text-on-surface">WebSocket: Connected</span></div></div><div class="flex items-center gap-lg"><div class="relative flex items-center justify-center p-sm rounded-full hover:bg-white/10 cursor-pointer transition-colors text-on-surface-variant hover:text-on-surface"><span class="material-symbols-outlined">notifications</span><span class="absolute top-2 right-2 w-2 h-2 bg-tertiary rounded-full border border-surface"></span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center cursor-pointer hover:ring-2 ring-primary/40 transition-all"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></header><main class="relative pt-16 min-h-screen"><div class="flex flex-col w-full relative">
+<div class="px-margin-desktop space-y-xl py-lg">
+<div class="flex items-end justify-between">
+<div class="space-y-xs relative z-10">
+<h1 class="font-headline-xl text-headline-xl text-on-surface">Mission Control</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">Real-time telemetry and pipeline performance.</p>
+</div>
+<div class="flex items-center gap-md bg-surface-container-high/40 backdrop-blur-md rounded-full px-lg py-sm shadow-lg border border-white/5">
+<span class="w-3 h-3 rounded-full bg-secondary-fixed pulse-green"></span>
+<span class="font-label-mono text-label-mono text-secondary-fixed uppercase tracking-wider">Engine Active</span>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-gutter">
+<div class="bg-surface-container-low/50 backdrop-blur-xl rounded-2xl p-lg relative overflow-hidden group hover:-translate-y-1 transition-transform duration-300 shadow-lg">
+<div class="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+<div class="flex items-center justify-between mb-lg relative z-10">
+<div class="flex items-center gap-sm">
+<div class="w-8 h-8 rounded-lg bg-primary-container/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary-fixed-dim text-[18px]">sensors</span>
+</div>
+<span class="font-label-mono text-label-mono text-on-surface-variant uppercase">Active Streams</span>
+</div>
+<span class="font-label-mono text-label-mono text-secondary-fixed bg-secondary-container/30 px-2 py-1 rounded">Live</span>
+</div>
+<div class="relative z-10">
+<div class="font-headline-xl text-headline-xl text-on-surface flex items-baseline gap-sm">
+            24
+            <span class="font-body-sm text-body-sm text-on-surface-variant">+3 this hour</span>
+</div>
+</div>
+<div class="absolute -right-8 -bottom-8 w-32 h-32 bg-primary/10 rounded-full blur-2xl"></div>
+</div>
+<div class="bg-surface-container-low/50 backdrop-blur-xl rounded-2xl p-lg relative overflow-hidden group hover:-translate-y-1 transition-transform duration-300 shadow-lg">
+<div class="absolute inset-0 bg-gradient-to-br from-tertiary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+<div class="flex items-center justify-between mb-lg relative z-10">
+<div class="flex items-center gap-sm">
+<div class="w-8 h-8 rounded-lg bg-tertiary-container/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-tertiary-fixed-dim text-[18px]">movie_edit</span>
+</div>
+<span class="font-label-mono text-label-mono text-on-surface-variant uppercase">Clips Today</span>
+</div>
+<div class="flex gap-1 items-end h-4" id="sparkline-container">
+<div class="w-1.5 bg-tertiary/20 rounded-t h-[40%]" style="height: 56%;"></div>
+<div class="w-1.5 bg-tertiary/40 rounded-t h-[60%]" style="height: 47%;"></div>
+<div class="w-1.5 bg-tertiary/60 rounded-t h-[30%]" style="height: 74%;"></div>
+<div class="w-1.5 bg-tertiary/80 rounded-t h-[80%]" style="height: 34%;"></div>
+<div class="w-1.5 bg-tertiary rounded-t h-[100%] pulse-green"></div>
+</div>
+</div>
+<div class="relative z-10">
+<div class="font-headline-xl text-headline-xl text-on-surface flex items-baseline gap-sm">
+            1,284
+            <span class="font-body-sm text-body-sm text-tertiary-fixed-dim flex items-center"><span class="material-symbols-outlined text-[14px]">arrow_upward</span>12%</span>
+</div>
+</div>
+<div class="absolute -right-8 -bottom-8 w-32 h-32 bg-tertiary/10 rounded-full blur-2xl"></div>
+</div>
+<div class="bg-surface-container-low/50 backdrop-blur-xl rounded-2xl p-lg relative overflow-hidden group hover:-translate-y-1 transition-transform duration-300 shadow-lg">
+<div class="absolute inset-0 bg-gradient-to-br from-secondary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+<div class="flex items-center justify-between mb-lg relative z-10">
+<div class="flex items-center gap-sm">
+<div class="w-8 h-8 rounded-lg bg-secondary-container/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-secondary-fixed-dim text-[18px]">visibility</span>
+</div>
+<span class="font-label-mono text-label-mono text-on-surface-variant uppercase">Total Reach</span>
+</div>
+</div>
+<div class="relative z-10">
+<div class="font-headline-xl text-headline-xl text-on-surface flex items-baseline gap-sm">
+            4.2M
+            <span class="font-body-sm text-body-sm text-on-surface-variant">Est. Impressions</span>
+</div>
+</div>
+<div class="absolute -right-8 -bottom-8 w-32 h-32 bg-secondary/10 rounded-full blur-2xl"></div>
+</div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-gutter mt-xl">
+<div class="lg:col-span-8 space-y-lg">
+<div class="flex items-center justify-between">
+<h2 class="font-headline-md text-headline-md text-on-surface flex items-center gap-sm">
+<span class="material-symbols-outlined text-primary">live_tv</span> Active Streamers
+          </h2>
+<button class="font-label-mono text-label-mono text-primary-fixed bg-transparent hover:bg-primary/10 px-md py-sm rounded-lg transition-colors border border-primary/20">
+            View All
+          </button>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+<div class="bg-surface-container/60 backdrop-blur-md rounded-xl overflow-hidden group shadow-md border border-white/5 flex flex-col">
+<div class="relative h-32 w-full bg-cover bg-center overflow-hidden" data-alt="Cyberpunk themed streaming setup with neon purple and blue lighting, high quality microphone in foreground, gaming monitor showing a fast paced shooter game. Depth of field focus on the mic." style="background-image: url(&quot;https://lh3.googleusercontent.com/aida-public/AB6AXuDR08XsVtnbTJMvPrkCXFiR8YuQEoWIMKox5tHFMpbbpjC3NP5H0W2zXlwFTW6O1iAQNKMub5uQP-sNQ1Er9LkVxlMuSEuaNbj1kFfF1NOP3w35hXG51GaL5SNaQemCspaOQFiJyupeZhbKXVbII0SiJe1cfOWg5lHxVikBK0b3WkijcYzmkgvPG9PJTWTX-NQe74OHVYei1gCqdKAcVObTNw0-BG-xEZ2C7q8x9wXi5gQ8YdGDi_c33w&quot;);">
+<div class="absolute inset-0 bg-gradient-to-t from-surface-container via-surface-container/50 to-transparent z-10"></div>
+<div class="absolute top-sm right-sm z-20 flex gap-xs">
+<span class="bg-red-600/80 backdrop-blur text-white font-label-mono text-[10px] px-2 py-0.5 rounded flex items-center gap-1"><span class="w-1.5 h-1.5 bg-white rounded-full pulse-green"></span>LIVE</span>
+<div class="bg-black/50 backdrop-blur rounded p-1 w-6 h-6 flex items-center justify-center">
+<svg class="w-4 h-4 text-purple-500" fill="currentColor" viewBox="0 0 24 24"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"></path></svg>
+</div>
+</div>
+</div>
+<div class="p-md relative z-20 -mt-8 flex items-start gap-md flex-1 bg-surface-container/80">
+<div class="w-12 h-12 rounded-full border-2 border-surface-container bg-surface flex-shrink-0 overflow-hidden shadow-lg relative">
+<img class="w-full h-full object-cover" data-alt="Portrait of a young female gamer with neon pink hair wearing professional gaming headset, illuminated by screen light" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDI4p4uPMTE5Vg6A4fG-0VX9dJShd6rlLXTWO046F5RKA6Tm0XtaiMdbetXWxv6Mr6mc4WbI9qsq6L_guc2ir11rnpczfAixo6oXBD73tIZGFxWJmsWdCMqr6Gw2cErvWFdWsy89FB88zCDJXfXyLvGYw3eaUWOjdJU0cJy1SL_E1srXVMygnOubrB_Ju6Q89WH2tOuW50i8Y0kHI76H3tsPQ61PA2q4ZH8nopPhvAYIKmrSu8ayWXIJw">
+<div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-surface rounded-full"></div>
+</div>
+<div class="flex-1 min-w-0">
+<h3 class="font-body-lg text-body-lg text-on-surface truncate font-semibold">NeonValkyrie</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant truncate">VALORANT Ranked Grind to Radiant</p>
+<div class="mt-sm flex gap-2">
+<span class="bg-primary/10 text-primary-fixed text-label-mono px-2 py-1 rounded text-[10px]">14.2k Viewers</span>
+<span class="bg-tertiary/10 text-tertiary-fixed text-label-mono px-2 py-1 rounded text-[10px]">98% Hype</span>
+</div>
+</div>
+</div>
+</div>
+<div class="bg-surface-container/60 backdrop-blur-md rounded-xl overflow-hidden group shadow-md border border-white/5 flex flex-col">
+<div class="relative h-32 w-full bg-cover bg-center overflow-hidden" data-alt="Abstract dynamic 3D render of data visualization, glowing orange and red nodes connecting in a dark digital void, representing high-speed network traffic." style="background-image: url(&quot;https://lh3.googleusercontent.com/aida-public/AB6AXuA5FNPjdHcR1jPl6p0Py2G-F-OTmfSolYes2tj-cERo5YfZF6kurokmFfQzKPguJ9TnIbCh3-uAD5cM7ActEI73gg8kjY7-8ROHDnxBxfEXN35srSTJjf0Wu2dHUa3E8NUiHqNbuyqb6MiZS49jhMbmc0pg2E61kqn5kdUYeXhukxdfLIvxK5nZ6fa-VpATgD0HcSG7GhvCajpf96pfIw40_4Lgp858ichLuWmhmlrbAvUrs8QvIv1GVg&quot;);">
+<div class="absolute inset-0 bg-gradient-to-t from-surface-container via-surface-container/50 to-transparent z-10"></div>
+<div class="absolute top-sm right-sm z-20 flex gap-xs">
+<span class="bg-red-600/80 backdrop-blur text-white font-label-mono text-[10px] px-2 py-0.5 rounded flex items-center gap-1"><span class="w-1.5 h-1.5 bg-white rounded-full pulse-green"></span>LIVE</span>
+<div class="bg-black/50 backdrop-blur rounded p-1 w-6 h-6 flex items-center justify-center">
+<svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"></path></svg>
+</div>
+</div>
+</div>
+<div class="p-md relative z-20 -mt-8 flex items-start gap-md flex-1 bg-surface-container/80">
+<div class="w-12 h-12 rounded-full border-2 border-surface-container bg-surface flex-shrink-0 overflow-hidden shadow-lg relative">
+<img class="w-full h-full object-cover" data-alt="Portrait of a male tech reviewer looking intently off-camera, dramatic studio lighting with blue rim light" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA8wCoITCGWqMxRUIFdEf_XC-tq5SB2PLHLNJmH3AYGWzf8KAC2rNgJDJdNy82eWbtkqRvmj6l8LSNy0J4zo--FVlvbpG2TX9x-heBKUXDTvVruhIHmP17OjdLs5qgLhDQHxGhQEzJy8UVS6AYkJu7lMolHP79T4_jIUle6woUMRDHarvzI6y7KaNpAKB5V681uCNzVS6GGBEPxkuI6CjS3BpNYEyD7hMNUFb7WwBQVfstxR_Nf9JDqbg">
+<div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-surface rounded-full"></div>
+</div>
+<div class="flex-1 min-w-0">
+<h3 class="font-body-lg text-body-lg text-on-surface truncate font-semibold">TechTalk Live</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant truncate">Apple Event Reactions &amp; Breakdown</p>
+<div class="mt-sm flex gap-2">
+<span class="bg-primary/10 text-primary-fixed text-label-mono px-2 py-1 rounded text-[10px]">8.5k Viewers</span>
+<span class="bg-secondary/10 text-secondary-fixed text-label-mono px-2 py-1 rounded text-[10px]">React Mode</span>
+</div>
+</div>
+</div>
+</div>
+<div class="bg-surface-container/60 backdrop-blur-md rounded-xl overflow-hidden group shadow-md border border-white/5 flex flex-col">
+<div class="relative h-32 w-full bg-cover bg-center overflow-hidden" data-alt="Wide shot of a grand piano in a dimly lit studio room, warm amber light spilling across the keys, cinematic moody aesthetic." style="background-image: url(&quot;https://lh3.googleusercontent.com/aida-public/AB6AXuBg6aRP2hbENEmpKUHjw6JOfs5eJ6PT3HTtom3XDKU0rT1qItF6CI1n-F1OAKQPDhrc5eDie8ftLZY4mgsWtaDbyvPDvmXlmCAdfUtFJcngwHE8sWPioWxdquyhJzkltpu4zO_HcRhcxWMhD5cjvW1WGQCQKmpQCJPTCf74UkLfv2pDNpUtnWsJBfEZTzJJquFaILqoT9WaFdP7IrDost1VU8UmGyFCqU-8MTivieKkJAe0Qa6Btg_oVg&quot;);">
+<div class="absolute inset-0 bg-gradient-to-t from-surface-container via-surface-container/50 to-transparent z-10"></div>
+<div class="absolute top-sm right-sm z-20 flex gap-xs">
+<span class="bg-red-600/80 backdrop-blur text-white font-label-mono text-[10px] px-2 py-0.5 rounded flex items-center gap-1"><span class="w-1.5 h-1.5 bg-white rounded-full pulse-green"></span>LIVE</span>
+<div class="bg-black/50 backdrop-blur rounded p-1 w-6 h-6 flex items-center justify-center">
+<svg class="w-4 h-4 text-purple-500" fill="currentColor" viewBox="0 0 24 24"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"></path></svg>
+</div>
+</div>
+</div>
+<div class="p-md relative z-20 -mt-8 flex items-start gap-md flex-1 bg-surface-container/80">
+<div class="w-12 h-12 rounded-full border-2 border-surface-container bg-surface flex-shrink-0 overflow-hidden shadow-lg relative">
+<img class="w-full h-full object-cover" data-alt="Portrait of a female musician closing her eyes while singing, soft warm lighting on face, microphone blurred in foreground" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA36x5N8DMSMoRCnIWsYNVTG29ezvhCKm6OKHbepBgz4rQeelrXUOTqobVh9QPGZAF0shFvVN6C99Eupx3Ys4K8HNy6l9gqn0qjVaIBEtPgv5AO9-EDi_v9pd9NMgf5JafdduMlomBxEm6bZr_eEDA3tqjXxdbTv8JggbHcEX8lbp5OyP3Cgfz2UnOQayIBa405Fg6pYSrGhCZ74WhuC53VgPnY3qZV5lm9ilhvucDFIkQZtUsAZrwvEg">
+<div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-surface rounded-full"></div>
+</div>
+<div class="flex-1 min-w-0">
+<h3 class="font-body-lg text-body-lg text-on-surface truncate font-semibold">MelodyMaker</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant truncate">Late Night Lofi Covers &amp; Chill</p>
+<div class="mt-sm flex gap-2">
+<span class="bg-primary/10 text-primary-fixed text-label-mono px-2 py-1 rounded text-[10px]">2.1k Viewers</span>
+<span class="bg-tertiary/10 text-tertiary-fixed text-label-mono px-2 py-1 rounded text-[10px]">85% Hype</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="lg:col-span-4 bg-surface-container-low/60 backdrop-blur-xl rounded-2xl border border-white/5 shadow-xl flex flex-col relative h-[600px] overflow-hidden">
+<div class="p-lg bg-surface-container/80 backdrop-blur border-b border-white/5 relative z-10">
+<div class="flex items-center justify-between">
+<h2 class="font-headline-md text-headline-md text-on-surface flex items-center gap-sm">
+<span class="material-symbols-outlined text-tertiary">memory</span> AI Activity
+            </h2>
+<div class="w-2 h-2 rounded-full bg-secondary-fixed animate-ping"></div>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-md space-y-md relative z-10 scrollbar-hide" id="activity-feed">
+<div class="bg-surface-container-highest/30 rounded-lg p-md border border-white/5 hover:bg-surface-container-highest/50 transition-colors">
+<div class="flex justify-between items-start mb-sm">
+<span class="font-label-mono text-label-mono text-tertiary-fixed flex items-center gap-xs">
+<span class="material-symbols-outlined text-[14px]">auto_awesome</span> Viral Moment Detected
+              </span>
+<span class="font-label-code text-label-code text-on-surface-variant">Just now</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface mb-2">High energy spike detected on <span class="font-semibold text-primary-fixed">NeonValkyrie</span> stream.</p>
+<div class="flex items-center gap-sm">
+<div class="flex-1 h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="w-[94%] h-full bg-gradient-to-r from-tertiary to-secondary"></div>
+</div>
+<span class="font-label-mono text-[10px] text-on-surface">Score: 94%</span>
+</div>
+</div>
+<div class="bg-surface-container-highest/30 rounded-lg p-md border border-white/5 hover:bg-surface-container-highest/50 transition-colors">
+<div class="flex justify-between items-start mb-sm">
+<span class="font-label-mono text-label-mono text-primary-fixed flex items-center gap-xs">
+<span class="material-symbols-outlined text-[14px]">stream_apps</span> Clip Generated
+              </span>
+<span class="font-label-code text-label-code text-on-surface-variant">2m ago</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface">"Insane 1v4 Clutch" automatically clipped and rendered.</p>
+<div class="mt-2 flex gap-2">
+<span class="text-[10px] font-label-code px-2 py-0.5 rounded bg-surface-container border border-white/10 text-on-surface-variant">Duration: 45s</span>
+<span class="text-[10px] font-label-code px-2 py-0.5 rounded bg-surface-container border border-white/10 text-on-surface-variant">Format: 9:16</span>
+</div>
+</div>
+<div class="bg-surface-container-highest/30 rounded-lg p-md border border-white/5 hover:bg-surface-container-highest/50 transition-colors opacity-70">
+<div class="flex justify-between items-start mb-sm">
+<span class="font-label-mono text-label-mono text-secondary-fixed flex items-center gap-xs">
+<span class="material-symbols-outlined text-[14px]">closed_caption</span> Transcription
+              </span>
+<span class="font-label-code text-label-code text-on-surface-variant">5m ago</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant line-clamp-2 italic">"...wait did he just do that? No way, chat did you see that?"</p>
+</div>
+<div class="bg-surface-container-highest/30 rounded-lg p-md border border-white/5 hover:bg-surface-container-highest/50 transition-colors opacity-50">
+<div class="flex justify-between items-start mb-sm">
+<span class="font-label-mono text-label-mono text-primary-fixed flex items-center gap-xs">
+<span class="material-symbols-outlined text-[14px]">check_circle</span> Export Complete
+              </span>
+<span class="font-label-code text-label-code text-on-surface-variant">12m ago</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Batch export to TikTok Drafts successful.</p>
+</div>
+</div>
+<div class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-surface-container-low to-transparent z-20 pointer-events-none"></div>
+</div>
+</div>
+</div>
+</div>
+<script>
+  
+  document.addEventListener('DOMContentLoaded', () => {
+    const bars = document.querySelectorAll('#sparkline-container div');
+    setInterval(() => {
+      bars.forEach(bar => {
+        if(!bar.classList.contains('pulse-green')) {
+            const height = Math.floor(Math.random() * 60) + 20; 
+            bar.style.height = `${height}%`;
+        }
+      });
+    }, 2000);
+  });
+</script></main></div>
+
+</body></html>

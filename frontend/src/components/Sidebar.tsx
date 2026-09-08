@@ -1,22 +1,19 @@
 "use client";
 
 import React from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   LayoutDashboard,
-  Sparkles,
-  Sliders,
-  Tv,
-  Radio,
   Film,
+  Radio,
+  Tv,
   UploadCloud,
   Settings,
-  Flame,
   ChevronLeft,
   ChevronRight,
   Zap,
-  Activity,
   Cpu,
+  Video,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -28,13 +25,11 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS = [
-  { id: "dashboard", label: "Overview", icon: LayoutDashboard, badge: null },
-  { id: "editor", label: "Studio Editor", icon: Sliders, badge: "PRO" },
-  { id: "generator", label: "Viral Clipper", icon: Sparkles, badge: "AI" },
-  { id: "streamers", label: "Streamers", icon: Tv, badge: null },
-  { id: "pipeline", label: "Live Engine", icon: Radio, badge: "LIVE" },
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, badge: null },
+  { id: "studio", label: "Clip Studio", icon: Video, badge: "PRO" },
+  { id: "auto_monitor", label: "Auto Monitor", icon: Radio, badge: "LIVE" },
   { id: "clips", label: "Clip Vault", icon: Film, badgeKey: "pending" },
-  { id: "uploads", label: "Upload Hub", icon: UploadCloud, badge: null },
+  { id: "uploads", label: "Distribution", icon: UploadCloud, badge: null },
   { id: "settings", label: "Settings", icon: Settings, badge: null },
 ];
 
@@ -48,15 +43,15 @@ export default function Sidebar({
   return (
     <motion.aside
       initial={false}
-      animate={{ width: isOpen ? 280 : 80 }}
+      animate={{ width: isOpen ? 230 : 76 }}
       transition={{ type: "spring", stiffness: 350, damping: 30 }}
-      className="fixed top-0 left-0 h-screen z-40 flex flex-col border-r border-white/10 bg-[#0b0e17]/95 backdrop-blur-2xl shadow-2xl"
+      className="fixed top-0 left-0 h-screen z-50 flex flex-col glacier-glass border-r border-white/[0.05] bg-[#0b1120]/95 backdrop-blur-3xl"
     >
       {/* ── Brand Logo Header ───────────────────────── */}
-      <div className="p-6 flex items-center justify-between border-b border-white/5">
-        <div className="flex items-center gap-3 overflow-hidden">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
-            <Flame className="w-6 h-6 text-white animate-pulse" />
+      <div className="p-4 flex items-center justify-between border-b border-white/[0.05]">
+        <div className="flex items-center gap-2.5 overflow-hidden">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#7dd3fc] to-[#004b71] flex items-center justify-center shadow-[0_0_20px_rgba(125,211,252,0.3)] flex-shrink-0">
+            <Zap className="w-4.5 h-4.5 text-[#00344f] fill-current" />
           </div>
           {isOpen && (
             <motion.div
@@ -65,11 +60,11 @@ export default function Sidebar({
               exit={{ opacity: 0, x: -10 }}
               className="flex flex-col"
             >
-              <span className="text-lg font-black tracking-tight text-white flex items-center gap-1">
-                STREAM<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-pink-400">CLIPPER</span>
+              <span className="text-xl font-bold tracking-tight text-white flex items-center gap-1 font-['Geist']">
+                LumiClip
               </span>
-              <span className="text-[10px] font-bold text-indigo-400/80 tracking-widest uppercase flex items-center gap-1">
-                <Zap className="w-3 h-3 text-pink-400" /> Viral Engine 2.0
+              <span className="text-[10px] font-mono font-bold text-[#7dd3fc] tracking-widest uppercase">
+                Glacier Edition
               </span>
             </motion.div>
           )}
@@ -77,72 +72,62 @@ export default function Sidebar({
 
         <button
           onClick={onToggle}
-          className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+          className="p-1.5 rounded-lg bg-white/[0.03] hover:bg-white/[0.08] text-slate-400 hover:text-white transition-colors border border-white/[0.05]"
           title={isOpen ? "Collapse Sidebar" : "Expand Sidebar"}
         >
           {isOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </button>
       </div>
 
-      {/* ── Quick Action Hero Button ────────────────── */}
-      <div className="px-4 pt-6 pb-2">
+      {/* ── Quick Action Button ─────────────────────── */}
+      <div className="px-3 pt-4 pb-2">
         <button
-          onClick={() => onTabChange("generator")}
-          className="w-full relative group overflow-hidden rounded-xl p-[1px] font-bold text-sm shadow-xl shadow-indigo-500/20"
+          onClick={() => onTabChange("studio")}
+          className="w-full relative group overflow-hidden rounded-xl p-[1px] font-bold text-sm"
         >
-          <span className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-xl animate-gradient" />
-          <div className="relative px-4 py-3 bg-[#0f1320] rounded-[11px] flex items-center justify-center gap-2 text-white group-hover:bg-transparent transition-all duration-300">
-            <Sparkles className="w-4 h-4 text-pink-400 group-hover:rotate-12 transition-transform" />
-            {isOpen && <span>Generate Viral Clips</span>}
+          <div className="px-3 py-2.5 bg-[#7dd3fc]/10 hover:bg-[#7dd3fc]/20 border border-[#7dd3fc]/30 rounded-xl flex items-center justify-center gap-2 text-[#7dd3fc] shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_0_15px_rgba(125,211,252,0.15)] transition-all duration-300">
+            <Zap className="w-4 h-4 fill-current drop-shadow-[0_0_8px_rgba(125,211,252,0.6)]" />
+            {isOpen && <span className="font-['Geist'] font-semibold text-xs tracking-wide">Clip Studio</span>}
           </div>
         </button>
       </div>
 
       {/* ── Navigation Items ───────────────────────── */}
-      <nav className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto">
+      <nav className="flex-1 px-2.5 py-2 space-y-1 overflow-y-auto">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
-          const badgeVal = item.badgeKey === "pending" ? (pendingCount > 0 ? pendingCount : null) : item.badge;
+          const badgeVal =
+            item.badgeKey === "pending" ? (pendingCount > 0 ? pendingCount : null) : item.badge;
 
           return (
             <button
               key={item.id}
               onClick={() => onTabChange(item.id)}
-              className={`w-full relative flex items-center gap-3.5 px-3.5 py-3 rounded-xl font-semibold text-sm transition-all duration-200 ${
+              className={`w-full relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl font-medium text-xs transition-all duration-200 ${
                 isActive
-                  ? "text-white shadow-lg shadow-indigo-500/10"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                  ? "bg-[#7dd3fc]/10 text-[#7dd3fc] font-semibold border border-[#7dd3fc]/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_0_15px_rgba(125,211,252,0.1)]"
+                  : "text-slate-400 hover:text-white hover:bg-white/[0.04]"
               }`}
             >
-              {isActive && (
-                <motion.div
-                  layoutId="activeTabPill"
-                  className="absolute inset-0 bg-gradient-to-r from-indigo-600/30 to-purple-600/20 border border-indigo-500/40 rounded-xl"
-                  transition={{ type: "spring", stiffness: 400, damping: 35 }}
-                />
-              )}
-
               <Icon
                 className={`w-5 h-5 flex-shrink-0 relative z-10 transition-transform ${
-                  isActive ? "text-indigo-400 scale-110" : "text-slate-400"
+                  isActive ? "text-[#7dd3fc] drop-shadow-[0_0_8px_rgba(125,211,252,0.5)]" : "text-slate-400"
                 }`}
               />
 
               {isOpen && (
-                <span className="relative z-10 flex-1 text-left whitespace-nowrap">
+                <span className="relative z-10 flex-1 text-left whitespace-nowrap font-['Inter']">
                   {item.label}
                 </span>
               )}
 
               {isOpen && badgeVal && (
                 <span
-                  className={`relative z-10 text-[11px] font-extrabold px-2 py-0.5 rounded-full ${
+                  className={`relative z-10 text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
                     item.badge === "LIVE"
                       ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse"
-                      : item.badge === "AI"
-                      ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
-                      : "bg-pink-500/20 text-pink-300 border border-pink-500/30 font-mono"
+                      : "bg-[#7dd3fc]/20 text-[#7dd3fc] border border-[#7dd3fc]/30 font-mono"
                   }`}
                 >
                   {badgeVal}
@@ -155,26 +140,26 @@ export default function Sidebar({
 
       {/* ── Hardware / System Monitor Footer ───────── */}
       {isOpen && (
-        <div className="p-4 m-3 rounded-2xl bg-white/[0.03] border border-white/5 space-y-3">
+        <div className="p-3 m-2.5 rounded-xl glacier-glass space-y-2.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-400 font-medium flex items-center gap-1.5">
-              <Cpu className="w-3.5 h-3.5 text-cyan-400" /> VRAM Boundary
+            <span className="text-slate-400 font-mono text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+              <Cpu className="w-3 h-3 text-[#7dd3fc]" /> GPU VRAM
             </span>
-            <span className="font-mono text-cyan-400 font-bold">16 GB</span>
+            <span className="font-mono text-[#7dd3fc] font-bold text-[11px]">16 GB</span>
           </div>
-          <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+          <div className="w-full bg-black/40 h-1.5 rounded-full overflow-hidden border border-white/5">
             <motion.div
-              initial={{ width: "35%" }}
-              animate={{ width: ["35%", "52%", "40%"] }}
+              initial={{ width: "45%" }}
+              animate={{ width: ["45%", "60%", "50%"] }}
               transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
-              className="h-full bg-gradient-to-r from-cyan-400 to-indigo-500 rounded-full"
+              className="h-full bg-[#7dd3fc] shadow-[0_0_10px_rgba(125,211,252,0.8)] rounded-full"
             />
           </div>
-          <div className="flex items-center justify-between text-[11px] text-slate-500">
-            <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> CFR 60fps
+          <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono">
+            <span className="flex items-center gap-1 uppercase">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-green" /> CFR 60fps
             </span>
-            <span>TaskQueue: Active</span>
+            <span className="text-slate-500">Pipeline Active</span>
           </div>
         </div>
       )}

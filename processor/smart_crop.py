@@ -105,15 +105,18 @@ class SmartCrop:
         target_height: int = 1920,
         layout_type: str = "single_speaker",
         duration: float = 30.0,
+        dynamic_editing: bool = True,
     ) -> str:
         """
         Analyze video segment and compile a production-ready FFmpeg filtergraph.
+        Supports dynamic editing (rhythmic jump zoom punch-ins at 3.5s intervals).
         
         Supported layout_type:
           - 'single_speaker': 9:16 crop dynamically centered on active speaker with EMA smoothing.
           - 'split_screen' or 'podcast': Top/Bottom 2-speaker vertical stack.
           - 'gamer': Facecam top window, gameplay center crop bottom window.
           - 'blurred_background': 16:9 centered box over blurred 9:16 canvas.
+          - 'white_canvas': 16:9 dynamic frame centered on clean 9:16 white canvas.
           - 'basic': Standard center crop.
         """
         center_crop = (
@@ -122,15 +125,40 @@ class SmartCrop:
             f"setsar=1"
         )
 
+        if layout_type in ("white_canvas", "16_9_white", "white_letterbox"):
+            if dynamic_editing:
+                return (
+                    f"color=c=white:s={target_width}x{target_height}[bg];"
+                    f"[0:v]crop='if(between(mod(t,7),3.5,7),in_w*0.88,in_w)':'if(between(mod(t,7),3.5,7),in_h*0.88,in_h)':'(in_w-out_w)/2':'(in_h-out_h)/2',"
+                    f"scale={target_width}:-2:force_original_aspect_ratio=decrease,setsar=1[fg];"
+                    f"[bg][fg]overlay=0:(H-h)/2:shortest=1,setsar=1"
+                )
+            return (
+                f"color=c=white:s={target_width}x{target_height}[bg];"
+                f"[0:v]scale={target_width}:-2:force_original_aspect_ratio=decrease,setsar=1[fg];"
+                f"[bg][fg]overlay=0:(H-h)/2:shortest=1,setsar=1"
+            )
+
         if layout_type == "basic":
+            if dynamic_editing:
+                return (
+                    f"crop='if(between(mod(t,7),3.5,7),in_w*0.88,in_w)':'if(between(mod(t,7),3.5,7),in_h*0.88,in_h)':'(in_w-out_w)/2':'(in_h-out_h)/2',"
+                    f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
+                    f"crop={target_width}:{target_height}:(in_w-{target_width})/2:(in_h-{target_height})/2,"
+                    f"setsar=1"
+                )
             return center_crop
 
-        if layout_type == "blurred_background":
+        if layout_type in ("blurred_background", "blur"):
+            fg_zoom = (
+                "crop='if(between(mod(t,7),3.5,7),in_w*0.88,in_w)':'if(between(mod(t,7),3.5,7),in_h*0.88,in_h)':'(in_w-out_w)/2':'(in_h-out_h)/2',"
+                if dynamic_editing else ""
+            )
             return (
                 f"split=2[fg][bg];"
                 f"[bg]scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
                 f"crop={target_width}:{target_height},boxblur=25:5[blurred];"
-                f"[fg]scale={target_width}:-1:force_original_aspect_ratio=decrease[scaled];"
+                f"[fg]{fg_zoom}scale={target_width}:-1:force_original_aspect_ratio=decrease[scaled];"
                 f"[blurred][scaled]overlay=(W-w)/2:(H-h)/2,setsar=1"
             )
 
@@ -173,7 +201,7 @@ class SmartCrop:
             elif layout_type == "gamer":
                 return self._build_gamer_split_filter(frame_detections, vid_w, vid_h, target_width, target_height, duration)
             else:
-                return self._build_single_speaker_filter(frame_detections, vid_w, vid_h, target_width, target_height, duration)
+                return self._build_single_speaker_filter(frame_detections, vid_w, vid_h, target_width, target_height, duration, dynamic_editing=dynamic_editing)
 
         except Exception as e:
             logger.error("SmartCrop generation failed: %s. Reverting to center crop.", e)
@@ -186,9 +214,10 @@ class SmartCrop:
         vid_h: int,
         target_w: int,
         target_h: int,
-        duration: float
+        duration: float,
+        dynamic_editing: bool = True,
     ) -> str:
-        """Dynamic 9:16 crop locked on active speaker with EMA trajectory smoothing."""
+        """Dynamic 9:16 crop locked on active speaker with EMA trajectory smoothing and optional punch-in zoom."""
         target_crop_w = int(vid_h * (9 / 16))
         target_crop_h = vid_h
 
@@ -221,11 +250,21 @@ class SmartCrop:
         regions = self._build_motion_regions(smoothed_x, duration)
         expr_x = self._compile_ffmpeg_regions(regions)
 
-        filter_graph = (
-            f"crop={target_crop_w}:{target_crop_h}:'{expr_x}':0,"
-            f"scale={target_w}:{target_h},"
-            f"setsar=1"
-        )
+        if dynamic_editing:
+            filter_graph = (
+                f"crop='if(between(mod(t,7),3.5,7),{target_crop_w}*0.88,{target_crop_w})':"
+                f"'if(between(mod(t,7),3.5,7),{target_crop_h}*0.88,{target_crop_h})':"
+                f"'if(between(mod(t,7),3.5,7),({expr_x})+{target_crop_w}*0.06,{expr_x})':"
+                f"'if(between(mod(t,7),3.5,7),{target_crop_h}*0.06,0)',"
+                f"scale={target_w}:{target_h},"
+                f"setsar=1"
+            )
+        else:
+            filter_graph = (
+                f"crop={target_crop_w}:{target_crop_h}:'{expr_x}':0,"
+                f"scale={target_w}:{target_h},"
+                f"setsar=1"
+            )
         return filter_graph
 
     def _build_gamer_split_filter(
