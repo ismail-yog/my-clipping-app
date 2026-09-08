@@ -245,29 +245,41 @@ class HookScorer:
 
     def _build_prompt(self, window_text: str, start_sec: float, end_sec: float, streamer_name: str) -> str:
         """Create structured prompt enforcing strict JSON output and 30-45s clip duration."""
-        return f"""Analyze this {int(end_sec - start_sec)}s audio transcript segment from streamer '{streamer_name}'.
+        return f"""Act as an elite short-form retention editor and scriptwriter. Your objective is to engineer video hooks that crush the Swipe-Away Rate (target under 20–30%) and push the Average Percentage Viewed (APV) toward 80–100%+.
+
+Analyze this {int(end_sec - start_sec)}s audio transcript segment from streamer '{streamer_name}'.
 Window start: {start_sec:.1f}s, Window end: {end_sec:.1f}s.
 
 Transcript:
 \"\"\"{window_text}\"\"\"
 
-Identify if there is a viral highlight moment in this window. Rate virality on a scale of 0 to 100.
-IMPORTANT: Clip duration ("end_sec" - "start_sec") MUST be strictly between 30 and 45 seconds.
-High scores (80-100) require:
-- Strong 3-second opening hook / sudden statement
-- High emotional reaction, punchline, victory, or failure
-- Cohesive standalone context for TikTok / YouTube Shorts
+Identify the highest-retention viral moment in this window. Apply these specific viral hook frameworks:
+1. The Climax Cut: Peak action/visual immediately, cutting right before the impact or reveal.
+2. The Contrarian Claim: Counter-intuitive belief contradicting common niche knowledge.
+3. The Pattern-Interrupt Call-Out: Direct audience trigger (e.g. "[Audience], stop scrolling!").
+4. The Fear/FOMO Trigger: Urgent mistake, loss, or risk of skipping.
+5. The Authority Anchor: Extreme personal experience or proof for instant credibility.
+6. The Abstract Concept / Curiosity Loop: Intriguing open-loop forcing the brain to stay for payoff.
 
-Output a JSON object matching this schema:
+Requirements:
+- "hook_text": Spoken hook under 3 seconds (8–15 words max) engineered with one of the 6 frameworks above.
+- "visual_cue": Visual direction (e.g. punch-in zoom, whip pan, on-screen graphic within safe zone).
+- "sound_cue": Sound design / caption SFX trigger (e.g. whoosh, vinyl stop, bass drop).
+- Clip duration ("end_sec" - "start_sec") MUST be strictly between 30 and 45 seconds.
+- Rate virality ("hook_score") from 0 to 100 based on emotional intensity and retention potential.
+
+Output MUST be a single raw JSON object matching this schema:
 {{
   "clips": [
     {{
       "start_sec": {start_sec:.1f},
       "end_sec": {min(end_sec, start_sec + 40.0):.1f},
-      "hook_score": 85,
-      "title": "Clickbait title under 75 characters (with emoji)",
-      "hook_text": "3-second opening subtitle (e.g. STOP SCROLLING 💀)",
-      "reasoning": "1 sentence explanation of why this retains viewers"
+      "hook_score": 88,
+      "title": "Front-loaded hook under 35 chars... #shorts #{streamer_name.lower().replace(' ', '')}",
+      "hook_text": "Spoken hook under 3 seconds / 8-15 words max",
+      "visual_cue": "1.14x punch-in zoom on face with high-contrast text",
+      "sound_cue": "Subtle bass thud + pop caption effect",
+      "reasoning": "Framework used and why it crushes swipe-away rate"
     }}
   ]
 }}
