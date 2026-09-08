@@ -78,6 +78,71 @@ class TestHookScorerGate(unittest.TestCase):
             self.assertGreaterEqual(c.duration_sec, 30.0)
             self.assertLessEqual(c.duration_sec, 45.0)
 
+    def test_lead_editorial_director_json_parsing_and_gate(self):
+        # Verify JSON parsing of Lead Editorial output schema
+        llm_response = """
+```json
+{
+  "is_viral": true,
+  "archetype": "The Plot Twist / Fail",
+  "start_word": "Bro",
+  "end_word": "WALL",
+  "hook_overlay": "HE THOUGHT HE WAS HIM 💀",
+  "retention_score": 9,
+  "editorial_reasoning": "Instant overconfidence setup followed by immediate catastrophic failure and scream."
+}
+```
+"""
+        segments = [
+            {
+                "start": 0.0,
+                "end": 35.0,
+                "text": "Bro watch this headshot through the WALL",
+                "words": [
+                    {"word": "Bro", "start": 0.5, "end": 1.0},
+                    {"word": "watch", "start": 1.1, "end": 1.5},
+                    {"word": "this", "start": 1.6, "end": 2.0},
+                    {"word": "WALL", "start": 32.0, "end": 33.5},
+                ]
+            }
+        ]
+        parsed = self.scorer._parse_llm_json(
+            response=llm_response,
+            window_text="Bro watch this headshot through the WALL",
+            start_sec=0.0,
+            end_sec=35.0,
+            window_segments=segments,
+        )
+        self.assertEqual(len(parsed), 1)
+        cand = parsed[0]
+        self.assertEqual(cand.archetype, "The Plot Twist / Fail")
+        self.assertEqual(cand.hook_score, 90)
+        self.assertEqual(cand.start_ms, 500)
+        self.assertEqual(cand.end_ms, 33500)
+        self.assertEqual(cand.hook_text, "HE THOUGHT HE WAS HIM 💀")
+
+    def test_lead_editorial_sub_8_gate_rejection(self):
+        # Verify that retention_score < 8 is strictly rejected
+        low_response = """
+{
+  "is_viral": true,
+  "archetype": "Unfiltered Storytime",
+  "start_word": "Okay",
+  "end_word": "cool",
+  "hook_overlay": "NICE TALK",
+  "retention_score": 7,
+  "editorial_reasoning": "Mildly interesting but lacks punchline."
+}
+"""
+        parsed = self.scorer._parse_llm_json(
+            response=low_response,
+            window_text="Okay that was cool",
+            start_sec=0.0,
+            end_sec=30.0,
+            window_segments=[],
+        )
+        self.assertEqual(len(parsed), 0, "Lead Editorial gate must reject score 7/10 (< 8/10)")
+
 
 class TestVODHookScorerIntegration(unittest.TestCase):
     @patch("processor.hook_scorer.HookScorer._call_nvidia_nim", return_value=None)

@@ -34,6 +34,10 @@ class HookCandidate:
     hook_text: str
     reasoning: str
     transcript_snippet: str = ""
+    archetype: str = "None"
+    start_word: str = ""
+    end_word: str = ""
+    editorial_reasoning: str = ""
 
     @property
     def duration_sec(self) -> float:
@@ -43,7 +47,7 @@ class HookCandidate:
 class HookScorer:
     """Evaluates transcript windows for retention, punchlines, and virality potential."""
 
-    def __init__(self, min_hook_score: int = 65):
+    def __init__(self, min_hook_score: int = 80):
         self.min_hook_score = min_hook_score
         self.nvidia_api_key = getattr(config, "NVIDIA_API_KEY", "") or os.environ.get("NVIDIA_API_KEY", "")
         self.nvidia_model = getattr(config, "NVIDIA_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
@@ -56,12 +60,12 @@ class HookScorer:
         self,
         transcript_segments: list,
         streamer_name: str = "Streamer",
-        window_sec: int = 40,
+        window_sec: int = 45,
         step_sec: int = 15
     ) -> List[HookCandidate]:
         """
-        Slice transcript into overlapping windows and execute structured virality scoring.
-        Enforces integer millisecond boundaries and strictly 30-45s duration bounds.
+        Slice transcript into overlapping windows and execute Lead Editorial Director virality scoring.
+        Aligns boundaries to word timestamps and strictly enforces 8/10+ (80%+) retention gate.
         """
         if not transcript_segments:
             return []
@@ -83,11 +87,11 @@ class HookScorer:
         while current_start < max_end_sec:
             current_end = min(current_start + window_sec, max_end_sec)
 
-            # Extract transcript text within window
+            # Extract transcript text and segments within window
             window_segments = [
                 seg for seg in transcript_segments
-                if float(_extract_seg_field(seg, "start", 0.0) or 0.0) >= current_start
-                and float(_extract_seg_field(seg, "end", 0.0) or 0.0) <= current_end
+                if float(_extract_seg_field(seg, "start", 0.0) or 0.0) >= (current_start - 0.5)
+                and float(_extract_seg_field(seg, "end", 0.0) or 0.0) <= (current_end + 0.5)
             ]
 
             window_text = " ".join(
@@ -102,7 +106,8 @@ class HookScorer:
                     window_text=window_text,
                     start_sec=current_start,
                     end_sec=current_end,
-                    streamer_name=streamer_name
+                    streamer_name=streamer_name,
+                    window_segments=window_segments,
                 )
                 candidates.extend(scored_clips)
 
@@ -140,7 +145,7 @@ class HookScorer:
         candidates = self.score_transcript(
             transcript_segments=transcript_segments,
             streamer_name=streamer_name,
-            window_sec=40,
+            window_sec=45,
             step_sec=10,
         )
 
@@ -152,15 +157,79 @@ class HookScorer:
             return best
         return None
 
+    def _align_word_timestamps(
+        self,
+        window_segments: list,
+        start_word: str,
+        end_word: str,
+        fallback_start_sec: float,
+        fallback_end_sec: float,
+    ) -> tuple[int, int]:
+        """
+        Match start_word and end_word to Whisper word timestamps for millisecond precision cut alignment.
+        Clamps duration strictly between 20s and 45s.
+        """
+        clean_sw = re.sub(r"[^\w]", "", start_word).lower()
+        clean_ew = re.sub(r"[^\w]", "", end_word).lower()
+
+        flattened_words: list[dict] = []
+        for seg in window_segments:
+            words_attr = _extract_seg_field(seg, "words", []) or []
+            for w in words_attr:
+                w_text = _extract_seg_field(w, "word", "") or ""
+                w_start = float(_extract_seg_field(w, "start", 0.0) or 0.0)
+                w_end = float(_extract_seg_field(w, "end", 0.0) or 0.0)
+                clean_w = re.sub(r"[^\w]", "", w_text).lower()
+                if clean_w:
+                    flattened_words.append({
+                        "clean": clean_w,
+                        "raw": w_text,
+                        "start_ms": int(round(w_start * 1000.0)),
+                        "end_ms": int(round(w_end * 1000.0)),
+                    })
+
+        matched_start_ms = None
+        matched_end_ms = None
+
+        if clean_sw and flattened_words:
+            for w in flattened_words:
+                if w["clean"] == clean_sw or clean_sw in w["clean"]:
+                    matched_start_ms = w["start_ms"]
+                    break
+
+        if clean_ew and flattened_words:
+            for w in reversed(flattened_words):
+                if w["clean"] == clean_ew or clean_ew in w["clean"]:
+                    matched_end_ms = w["end_ms"]
+                    break
+
+        # Fallback to float bounds if word alignment misses
+        final_start_ms = matched_start_ms if matched_start_ms is not None else int(round(fallback_start_sec * 1000.0))
+        final_end_ms = matched_end_ms if matched_end_ms is not None else int(round(fallback_end_sec * 1000.0))
+
+        # Enforce 20s minimum and 45s maximum duration constraints
+        if final_end_ms <= final_start_ms:
+            final_end_ms = final_start_ms + 35000
+
+        dur_ms = final_end_ms - final_start_ms
+        if dur_ms < 20000:
+            final_end_ms = final_start_ms + 20000
+        elif dur_ms > 45000:
+            final_end_ms = final_start_ms + 45000
+
+        return final_start_ms, final_end_ms
+
     def _score_window_llm(
         self,
         window_text: str,
         start_sec: float,
         end_sec: float,
-        streamer_name: str
+        streamer_name: str,
+        window_segments: Optional[list] = None,
     ) -> List[HookCandidate]:
         """Call NVIDIA NIM or local Ollama LLM to get structured JSON clip evaluations."""
         prompt = self._build_prompt(window_text, start_sec, end_sec, streamer_name)
+        segments_ref = window_segments or []
 
         # 1. Try NVIDIA NIM endpoints if API key available and circuit breaker open
         if self.nvidia_api_key and not self._nim_disabled:
@@ -171,7 +240,7 @@ class HookScorer:
                 try:
                     response = self._call_nvidia_nim(prompt, model)
                     if response:
-                        parsed = self._parse_llm_json(response, window_text, start_sec, end_sec)
+                        parsed = self._parse_llm_json(response, window_text, start_sec, end_sec, segments_ref)
                         if parsed:
                             return parsed
                 except Exception as e:
@@ -184,7 +253,7 @@ class HookScorer:
             try:
                 ollama_response = self._call_ollama(prompt)
                 if ollama_response:
-                    parsed = self._parse_llm_json(ollama_response, window_text, start_sec, end_sec)
+                    parsed = self._parse_llm_json(ollama_response, window_text, start_sec, end_sec, segments_ref)
                     if parsed:
                         return parsed
             except Exception as e:
@@ -204,10 +273,13 @@ class HookScorer:
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": "You are a professional viral short-form video editor. Output ONLY raw JSON matching the exact schema."},
+                {
+                    "role": "system",
+                    "content": "You are the Lead Editorial Director for a viral short-form media brand. Output ONLY raw JSON matching the exact schema."
+                },
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.3,
+            "temperature": 0.2,
             "max_tokens": 1024,
         }
         try:
@@ -231,7 +303,7 @@ class HookScorer:
             "model": ollama_model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0.3},
+            "options": {"temperature": 0.2},
         }
         try:
             resp = requests.post(url, json=payload, timeout=2)
@@ -244,44 +316,69 @@ class HookScorer:
         return None
 
     def _build_prompt(self, window_text: str, start_sec: float, end_sec: float, streamer_name: str) -> str:
-        """Create structured prompt enforcing strict JSON output and 30-45s clip duration."""
-        return f"""Act as an elite short-form retention editor and scriptwriter. Your objective is to engineer video hooks that crush the Swipe-Away Rate (target under 20–30%) and push the Average Percentage Viewed (APV) toward 80–100%+.
+        """Create structured Lead Editorial Director prompt with 4 archetypes, hard negative constraints, and few-shots."""
+        return f"""You are the Lead Editorial Director for a viral short-form media brand.
+Your objective is to evaluate 60-90 second live stream transcripts and identify ONLY high-retention, standalone candidate clips (20-45 seconds).
 
-Analyze this {int(end_sec - start_sec)}s audio transcript segment from streamer '{streamer_name}'.
-Window start: {start_sec:.1f}s, Window end: {end_sec:.1f}s.
+### TARGET CLIP ARCHETYPES:
+1. The Rage / Meltdown: Sudden spike in vocal pitch/volume following an unexpected in-game death or betrayal.
+2. The Plot Twist / Fail: Streamer acts overconfident ("Watch this clutch"), followed immediately by instant failure.
+3. Unfiltered Storytime: A cohesive narrative with an intriguing premise that hooks the listener within the first 3 seconds and concludes with a punchline.
+4. Out-of-Context Absurdity: Bizarre statements or interactions between chat and streamer that sound surreal out of context.
 
-Transcript:
+### CLIP CRITERIA:
+1. THE HOOK (0-3s): The selected window MUST open with an immediate point of intrigue, high energy, or a shocking statement.
+2. ESCALATION: The tension or humor must continuously build without dead air.
+3. THE PUNCHLINE/PAYOFF: The clip must end immediately after the climax or punchline (e.g., laughter, desk slam, or mic drop).
+
+### HARD NEGATIVE CONSTRAINTS (INSTANT DISQUALIFICATION):
+- Cold Intros: REJECT if context requires knowing what happened 5 minutes earlier.
+- Streamer Admin Tasks: REJECT if reading out sub names, adjusting OBS/mic settings, or loading screens.
+- Dangling Sentences: REJECT if dialogue ends mid-thought or mid-sentence.
+- Monotone Delivery: REJECT if speech cadence shows zero emotional inflection or energy.
+- If no segment meets a retention score of 8/10 or higher, return "is_viral": false.
+
+### FEW-SHOT CALIBRATION EXAMPLES:
+[POSITIVE EXAMPLE]
+Transcript: "Bro trust me on this flank I'm literally top 500 in this lobby just watch me cook... wait where is he... NO NO NO HOW DID HE HEADSHOT ME THROUGH THE WALL!?"
+Output:
+{{
+  "is_viral": true,
+  "archetype": "The Plot Twist / Fail",
+  "start_word": "Bro",
+  "end_word": "WALL",
+  "hook_overlay": "HE THOUGHT HE WAS HIM 💀",
+  "retention_score": 9,
+  "editorial_reasoning": "Instant overconfidence setup followed by immediate catastrophic failure and scream."
+}}
+
+[NEGATIVE EXAMPLE]
+Transcript: "Okay wait chat let me fix my audio settings... thanks for the 5 gifted subs xXGamerXx appreciate the love man... alright let's queue up again."
+Output:
+{{
+  "is_viral": false,
+  "archetype": "None",
+  "start_word": "",
+  "end_word": "",
+  "hook_overlay": "",
+  "retention_score": 2,
+  "editorial_reasoning": "Administrative filler and sub alerts with zero narrative hook or entertainment value."
+}}
+
+---
+STREAMER: {streamer_name}
+TRANSCRIPT WINDOW:
 \"\"\"{window_text}\"\"\"
 
-Identify the highest-retention viral moment in this window. Apply these specific viral hook frameworks:
-1. The Climax Cut: Peak action/visual immediately, cutting right before the impact or reveal.
-2. The Contrarian Claim: Counter-intuitive belief contradicting common niche knowledge.
-3. The Pattern-Interrupt Call-Out: Direct audience trigger (e.g. "[Audience], stop scrolling!").
-4. The Fear/FOMO Trigger: Urgent mistake, loss, or risk of skipping.
-5. The Authority Anchor: Extreme personal experience or proof for instant credibility.
-6. The Abstract Concept / Curiosity Loop: Intriguing open-loop forcing the brain to stay for payoff.
-
-Requirements:
-- "hook_text": Spoken hook under 3 seconds (8–15 words max) engineered with one of the 6 frameworks above.
-- "visual_cue": Visual direction (e.g. punch-in zoom, whip pan, on-screen graphic within safe zone).
-- "sound_cue": Sound design / caption SFX trigger (e.g. whoosh, vinyl stop, bass drop).
-- Clip duration ("end_sec" - "start_sec") MUST be strictly between 30 and 45 seconds.
-- Rate virality ("hook_score") from 0 to 100 based on emotional intensity and retention potential.
-
-Output MUST be a single raw JSON object matching this schema:
+OUTPUT MUST BE ONLY A SINGLE RAW JSON OBJECT:
 {{
-  "clips": [
-    {{
-      "start_sec": {start_sec:.1f},
-      "end_sec": {min(end_sec, start_sec + 40.0):.1f},
-      "hook_score": 88,
-      "title": "Front-loaded hook under 35 chars... #shorts #{streamer_name.lower().replace(' ', '')}",
-      "hook_text": "Spoken hook under 3 seconds / 8-15 words max",
-      "visual_cue": "1.14x punch-in zoom on face with high-contrast text",
-      "sound_cue": "Subtle bass thud + pop caption effect",
-      "reasoning": "Framework used and why it crushes swipe-away rate"
-    }}
-  ]
+  "is_viral": true,
+  "archetype": "The Rage / Meltdown" | "The Plot Twist / Fail" | "Unfiltered Storytime" | "Out-of-Context Absurdity" | "None",
+  "start_word": "<exact word in transcript>",
+  "end_word": "<exact word in transcript>",
+  "hook_overlay": "<3-5 word high-impact Gen Z caption>",
+  "retention_score": <int 1-10>,
+  "editorial_reasoning": "<1 sentence justifying why this converts on TikTok/Shorts>"
 }}
 """
 
@@ -290,9 +387,10 @@ Output MUST be a single raw JSON object matching this schema:
         response: str,
         window_text: str,
         start_sec: float,
-        end_sec: float
+        end_sec: float,
+        window_segments: list,
     ) -> List[HookCandidate]:
-        """Extract and validate JSON clip objects from LLM response with strict 30-45s duration clamping."""
+        """Extract and validate JSON clip objects from LLM response with word alignment and strict 8/10 gate."""
         try:
             cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
 
@@ -303,7 +401,7 @@ Output MUST be a single raw JSON object matching this schema:
                 for b in reversed(code_blocks):
                     try:
                         data = json.loads(b)
-                        if "clips" in data:
+                        if "is_viral" in data or "retention_score" in data:
                             break
                     except Exception:
                         pass
@@ -314,41 +412,53 @@ Output MUST be a single raw JSON object matching this schema:
                 if start >= 0 and end > start:
                     data = json.loads(cleaned[start:end])
 
-            if not data or "clips" not in data:
+            if not data or not isinstance(data, dict):
                 return []
 
-            results: List[HookCandidate] = []
-            for item in data["clips"]:
-                c_start_sec = float(item.get("start_sec", start_sec))
-                c_end_sec = float(item.get("end_sec", end_sec))
+            is_viral = bool(data.get("is_viral", False))
+            raw_score = int(data.get("retention_score", 0))
 
-                # Enforce strictly 30s to 45s duration bounds
-                cand_dur = c_end_sec - c_start_sec
-                if cand_dur < 30.0:
-                    c_end_sec = c_start_sec + 30.0
-                elif cand_dur > 45.0:
-                    c_end_sec = c_start_sec + 45.0
+            # Strict 8/10 gate: reject any score < 8 or is_viral == False
+            if not is_viral or raw_score < 8:
+                logger.debug("Candidate rejected by Lead Editorial gate: viral=%s, score=%d/10", is_viral, raw_score)
+                return []
 
-                score = int(item.get("hook_score", 50))
-                title = str(item.get("title", ""))[:80]
-                hook_text = str(item.get("hook_text", ""))[:40]
-                reasoning = str(item.get("reasoning", ""))
+            score_100 = min(100, raw_score * 10)
+            archetype = str(data.get("archetype", "Out-of-Context Absurdity"))
+            start_word = str(data.get("start_word", "")).strip()
+            end_word = str(data.get("end_word", "")).strip()
+            hook_overlay = str(data.get("hook_overlay", "")).strip() or "BRO NO WAY 💀"
+            reasoning = str(data.get("editorial_reasoning", "")).strip()
 
-                results.append(
-                    HookCandidate(
-                        start_ms=int(round(c_start_sec * 1000.0)),
-                        end_ms=int(round(c_end_sec * 1000.0)),
-                        hook_score=score,
-                        title=title,
-                        hook_text=hook_text,
-                        reasoning=reasoning,
-                        transcript_snippet=window_text[:200]
-                    )
+            # Map exact Whisper word timestamps
+            start_ms, end_ms = self._align_word_timestamps(
+                window_segments=window_segments,
+                start_word=start_word,
+                end_word=end_word,
+                fallback_start_sec=start_sec,
+                fallback_end_sec=end_sec,
+            )
+
+            title = f"{hook_overlay} #shorts"
+
+            return [
+                HookCandidate(
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    hook_score=score_100,
+                    title=title,
+                    hook_text=hook_overlay,
+                    reasoning=reasoning,
+                    transcript_snippet=window_text[:200],
+                    archetype=archetype,
+                    start_word=start_word,
+                    end_word=end_word,
+                    editorial_reasoning=reasoning,
                 )
-            return results
+            ]
 
         except Exception as e:
-            logger.debug("Failed to parse hook scoring JSON: %s", e)
+            logger.debug("Failed to parse Lead Editorial Director JSON: %s", e)
             return []
 
     def _heuristic_fallback(
@@ -394,6 +504,18 @@ Output MUST be a single raw JSON object matching this schema:
         hook_snippet = snippet.upper()[:25] if snippet else "WAIT FOR IT"
         hook_text = f"{hook_snippet} 💀" if "💀" not in hook_snippet else hook_snippet
 
+        # Archetype heuristic classification
+        archetype = "Out-of-Context Absurdity"
+        if any(k in text_lower for k in ["rage", "lost it", "screaming", "crying", "wtf"]):
+            archetype = "The Rage / Meltdown"
+        elif any(k in text_lower for k in ["clutch", "hack", "aimbot", "dead", "ruined"]):
+            archetype = "The Plot Twist / Fail"
+        elif any(k in text_lower for k in ["i ", "my ", "story", "yesterday", "told him"]):
+            archetype = "Unfiltered Storytime"
+
+        start_word = words[0] if words else ""
+        end_word = words[-1] if words else ""
+
         return [
             HookCandidate(
                 start_ms=int(round(start_sec * 1000.0)),
@@ -402,7 +524,11 @@ Output MUST be a single raw JSON object matching this schema:
                 title=title[:75],
                 hook_text=hook_text[:35],
                 reasoning="Evaluated emotional density, hype tokens, and narrative coherence in transcript.",
-                transcript_snippet=window_text[:200]
+                transcript_snippet=window_text[:200],
+                archetype=archetype,
+                start_word=start_word,
+                end_word=end_word,
+                editorial_reasoning=f"Classified as {archetype} based on acoustic/semantic keyword density.",
             )
         ]
 

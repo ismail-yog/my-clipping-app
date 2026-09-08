@@ -41,6 +41,8 @@ class ClipMetadata:
     description: str = ""
     tags: list = field(default_factory=list)
     seo_ready: bool = False
+    archetype: str = ""
+    editorial_reasoning: str = ""
 
     # Fields for pipeline tracking
     source_streamer: str = "vod"

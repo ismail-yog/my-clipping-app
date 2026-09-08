@@ -201,8 +201,22 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+            # Auto-migrate: ensure archetype and editorial_reasoning exist in clips table
+            try:
+                conn.execute("ALTER TABLE clips ADD COLUMN archetype TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE clips ADD COLUMN editorial_reasoning TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+
             try:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_account ON uploads(account_id)")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_clips_archetype ON clips(archetype)")
             except sqlite3.OperationalError:
                 pass
 
@@ -340,6 +354,8 @@ class Database:
         has_captions: bool = False,
         session_id: Optional[int] = None,
         auto_approve: bool = False,
+        archetype: str = "",
+        editorial_reasoning: str = "",
     ) -> int:
         """Save a new clip. Strictly dumps any clip with moment_score < 0.65."""
         if moment_score < 0.65:
@@ -354,15 +370,15 @@ class Database:
                 """INSERT INTO clips
                    (clip_id, session_id, streamer_name, platform, clip_path,
                     duration, moment_score, emotion, transcript, has_captions,
-                    status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    status, archetype, editorial_reasoning, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     clip_id, session_id, streamer_name, platform, clip_path,
                     duration, moment_score, emotion, transcript[:2000],
-                    int(has_captions), status, now, now,
+                    int(has_captions), status, archetype, editorial_reasoning, now, now,
                 ),
             )
-            logger.info("Clip saved: %s (score=%.2f, status=%s)", clip_id, moment_score, status)
+            logger.info("Clip saved: %s (score=%.2f, status=%s, archetype=%s)", clip_id, moment_score, status, archetype or "None")
             return cursor.lastrowid
 
     def update_clip_seo(

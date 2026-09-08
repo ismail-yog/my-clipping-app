@@ -308,6 +308,8 @@ class VODProcessor:
                     transcript=clip.transcript[:500],
                     has_captions=clip.has_captions,
                     auto_approve=auto_approve,
+                    archetype=getattr(clip, "archetype", "Out-of-Context Absurdity"),
+                    editorial_reasoning=getattr(clip, "editorial_reasoning", ""),
                 )
                 if not saved_id:
                     logger.info("Clip %s refused by database — dumping immediately", clip.clip_id)

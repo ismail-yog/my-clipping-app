@@ -53,6 +53,8 @@ export interface ClipItem {
   streamer_name?: string;
   created_at?: number;
   transcript?: string;
+  archetype?: string;
+  editorial_reasoning?: string;
 }
 
 // Fallback high-fidelity cards matching user design screenshot
@@ -793,17 +795,27 @@ export default function ClipsTab() {
 
                   {/* Tag Pills Row */}
                   <div className="flex items-center justify-between gap-1 flex-wrap">
-                    <span
-                      className={`text-[9px] font-bold font-mono tracking-wider px-2 py-0.5 rounded-md uppercase ${
-                        emotionTag === "HYPE"
-                          ? "bg-[#ffe4e6] text-[#be123c]"
-                          : emotionTag === "FUNNY"
-                          ? "bg-[#fef3c7] text-[#b45309]"
-                          : "bg-[#e0f2fe] text-[#0369a1]"
-                      }`}
-                    >
-                      {emotionTag}
-                    </span>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span
+                        className={`text-[9px] font-bold font-mono tracking-wider px-2 py-0.5 rounded-md uppercase ${
+                          emotionTag === "HYPE"
+                            ? "bg-[#ffe4e6] text-[#be123c]"
+                            : emotionTag === "FUNNY"
+                            ? "bg-[#fef3c7] text-[#b45309]"
+                            : "bg-[#e0f2fe] text-[#0369a1]"
+                        }`}
+                      >
+                        {emotionTag}
+                      </span>
+                      {clip.archetype && clip.archetype !== "None" && (
+                        <span
+                          className="text-[9px] font-extrabold font-mono tracking-wider px-2 py-0.5 rounded-md bg-purple-100 text-purple-800 border border-purple-200 uppercase truncate max-w-[110px]"
+                          title={`Archetype: ${clip.archetype}${clip.editorial_reasoning ? ' — ' + clip.editorial_reasoning : ''}`}
+                        >
+                          ⚡ {clip.archetype.replace("The ", "")}
+                        </span>
+                      )}
+                    </div>
 
                     {/* Dynamic Queue Status Tag */}
                     <span

@@ -361,7 +361,7 @@ class StreamPipeline:
             auto_approve = clip_meta.moment_score >= 0.65
             logger.info("🎬 Auto-approving clip %s (score=%.2f >= 0.65) for upload", clip_meta.clip_id, clip_meta.moment_score)
 
-            # Save clip to database
+            # Save clip to database with archetype and editorial reasoning
             self.db.save_clip(
                 clip_id=clip_meta.clip_id,
                 streamer_name=self.streamer.name,
@@ -374,6 +374,8 @@ class StreamPipeline:
                 has_captions=clip_meta.has_captions,
                 session_id=self._session_id,
                 auto_approve=auto_approve,
+                archetype=getattr(candidate, "archetype", "Out-of-Context Absurdity"),
+                editorial_reasoning=getattr(candidate, "editorial_reasoning", ""),
             )
 
             # Generate SEO metadata (Ollama or template), preserving candidate title & hook
