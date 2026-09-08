@@ -154,31 +154,38 @@ class SEOGenerator:
             custom_prompt_section = f"""
 Additional Custom Creator Directives & Persona:
 {custom_prompt}
-(CRITICAL: Adhere to the custom creator directives above while preserving the JSON output schema.)
+(CRITICAL: Strictly prioritize these custom creator directives.)
 """
 
-        desc_instruction = "2-sentence summary of the moment with 5 viral TikTok hashtags #fyp #streamer #gaming #viral #clutch"
-        if desc_template:
-            desc_instruction = f"Format description conforming to this template: {desc_template}"
+        return f"""You are an elite, battle-tested YouTube Shorts viral growth strategist and metadata specialist.
+Your objective: Maximize Click-Through Rate (CTR) across YouTube Shorts mobile feeds, browse features, and YouTube Search.
 
-        return f"""You are a top-tier TikTok / YouTube Shorts viral clip editor specializing in Gen-Z retention formulas.
-Generate metadata for a short-form video clip using these details:
+Clip Context:
 - Streamer / Creator: {streamer_name}
-- Dominant Emotion: {emotion or 'hype'}
-- Speech Transcript: "{transcript[:600]}"
+- Dominant Emotion / Energy: {emotion or 'hype'}
+- Spoken Audio Transcript: "{transcript[:600]}"
 {custom_prompt_section}
-Rules for Title & Hook:
-1. Use authentic Gen-Z / TikTok phrasing (lowercase lowercase or lowercase with emojis: e.g. "bro thought he was him 💀", "ain't no way he said that 😭", "nah chat is cooking him rn", "he really sold the bag 💀").
-2. Reference what was actually spoken in the transcript in quotes when applicable (e.g. bro really said "..." 💀).
-3. NEVER use generic 2012 words like "EPIC MELTDOWN", "MIND BLOWN", "UNBELIEVABLE", "CRAZY REACTION". Keep it raw, hilarious, and punchy.
+Directives:
+1. TITLES:
+   - Front-load high-impact, curiosity-driven words within the FIRST 35 CHARACTERS so the hook is NEVER truncated on mobile screens.
+   - Employ open loops, extreme curiosity gaps, FOMO, or high viewer desire (NEVER write passive, boring descriptive summaries).
+   - Append strictly 1-2 targeted hashtags at the absolute end of the title (e.g. #shorts #{streamer_name.lower().replace(' ', '')}).
+   - Total title length under 75 characters.
 
-Output MUST be a single raw JSON object matching the schema below:
+2. DESCRIPTION:
+   - Paragraph 1: 1-2 sentence high-voltage contextual opening hook summarizing the exact moment.
+   - Section 2: "Search Queries:" followed by 10 to 15 natural search phrases and long-tail keyword variations viewers actually type into the YouTube search bar for this creator and event.
+
+3. TAGS:
+   - Generate an array of 10 to 15 comma-separated tag strings directly mirroring the 10-15 search queries.
+
+Output MUST be a single raw JSON object matching this schema:
 {{
-  "title": "Viral Gen-Z title under 75 chars with 1 emoji (e.g. bro thought he was him 💀)",
-  "description": "{desc_instruction}",
-  "tags": ["{streamer_name.lower()}", "gaming", "streamer", "viral", "fyp", "shorts", "tiktok"],
-  "hook_text": "High-retention streamer headline hook between 40-80 chars with 1-2 emojis (e.g. {streamer_name} was HYPED that DDG is back on YT but says he isn't DUB 😭💀)",
-  "thumbnail_prompt": "1-2 punchy words (e.g. NO WAY)"
+  "title": "Front-loaded hook under 35 chars... #shorts #{streamer_name.lower().replace(' ', '')}",
+  "description": "1-2 sentence hook.\\n\\nSearch Queries:\\n1. query one\\n2. query two...\\n\\nStreamer: {streamer_name}\\n#Shorts #Gaming",
+  "tags": ["query one", "query two", "query three", "{streamer_name.lower()}", "shorts", "gaming"],
+  "hook_text": "High-retention streamer headline hook between 40-80 chars (e.g. {streamer_name} caught in 4K 😭💀)",
+  "thumbnail_prompt": "2 PUNCHY WORDS"
 }}
 """
 
@@ -194,12 +201,14 @@ Output MUST be a single raw JSON object matching the schema below:
     ) -> str:
         """Hydrate description template placeholders."""
         tags_hash = " ".join([f"#{t.replace(' ', '')}" for t in tags[:5]]) if tags else "#Shorts #gaming #viral"
+        search_queries_str = "\n".join([f"- {t}" for t in tags]) if tags else f"- {streamer_name} clips\n- {streamer_name} funny moments"
         rendered = template
         replacements = {
             "{streamer}": streamer_name,
             "{title}": title,
             "{summary}": summary or title,
             "{hashtags}": tags_hash,
+            "{search_queries}": search_queries_str,
             "{emotion}": emotion or "hype",
             "{transcript}": transcript[:250],
         }

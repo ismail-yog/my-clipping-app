@@ -7,8 +7,8 @@
   "burn_captions": true,
   "viral_threshold": 0.9,
   "auto_publish": false,
-  "ai_custom_prompt": "Use suspenseful curiosity gaps with high FOMO (e.g. \"he had no idea what was about to happen...\", \"watch till the end\"). Emphasize extreme shock and disbelief.",
-  "ai_description_template": "{summary}\n\nStreamer: {streamer}\nWatch: https://twitch.tv/{streamer}\n\n{hashtags} {title}",
+  "ai_custom_prompt": "Act as a viral YouTube Shorts growth strategist and metadata specialist. 1. TITLES: Generate clickable title options front-loading the most compelling words in the first 35 characters so the hook is never cut off on mobile search or browse feeds. Use curiosity gaps, open loops, FOMO, or strong viewer desires (no boring summaries). Place 1-2 relevant hashtags strictly at the very end. 2. DESCRIPTION: Provide a 1-2 sentence contextual opening hook, followed by a 'Search Queries' section containing 10-15 natural search phrases and long-tail keyword variations people type into YouTube search. 3. TAGS: Output comma-separated tags matching the 10-15 search phrases.",
+  "ai_description_template": "{summary}\n\nSearch Queries:\n{search_queries}\n\nStreamer: {streamer}\n{hashtags}",
   "upload_schedule_mode": "peak_hours",
   "upload_peak_hours": [
     "08:00",
