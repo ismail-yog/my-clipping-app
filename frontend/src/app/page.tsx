@@ -6,10 +6,8 @@ import { connectWebSocket, StatusUpdate } from "@/lib/ws";
 import { getStatus } from "@/lib/api";
 
 import DashboardTab from "@/components/tabs/DashboardTab";
-import EditorTab from "@/components/tabs/EditorTab";
-import ClipGeneratorTab from "@/components/tabs/ClipGeneratorTab";
-import StreamersTab from "@/components/tabs/StreamersTab";
-import PipelineTab from "@/components/tabs/PipelineTab";
+import ClipStudioTab from "@/components/tabs/ClipStudioTab";
+import AutoMonitorTab from "@/components/tabs/AutoMonitorTab";
 import ClipsTab from "@/components/tabs/ClipsTab";
 import UploadsTab from "@/components/tabs/UploadsTab";
 import SettingsTab from "@/components/tabs/SettingsTab";
@@ -161,8 +159,6 @@ const NAV_ITEMS = [
   { id:"streamers",  label:"Auto Monitor",  icon:"📺" },
   { id:"clips",      label:"Clip Vault",    icon:"🗂️" },
   { id:"uploads",    label:"Distribution",  icon:"⬆️" },
-  { id:"pipeline",   label:"Pipeline",      icon:"⚙️" },
-  { id:"editor",     label:"Editor",        icon:"🎬" },
   { id:"settings",   label:"Settings",      icon:"⚙️" },
 ];
 
@@ -179,17 +175,14 @@ export default function SynclipDashboard() {
       setPendingCount(data.pending_review);
       if (data.vod_progress) setVodProgress(data.vod_progress);
     });
-    return () => { if (ws) ws.close(); };
-  }, []);
-
-  useEffect(() => {
     getStatus()
-      .then((data: Record<string, unknown>) => {
+      .then((s) => {
         setConnected(true);
-        const stats = data.stats as Record<string, unknown> | undefined;
+        const stats = s.stats as Record<string, unknown> | undefined;
         setPendingCount((stats?.pending_review as number) ?? 0);
       })
       .catch(() => setConnected(false));
+    return () => { if (ws) ws.close(); };
   }, []);
 
   const navigate = (id: string) => { setActiveTab(id); setNavKey(k => k+1); };
@@ -257,10 +250,8 @@ export default function SynclipDashboard() {
             style={{ padding:"24px 32px", maxWidth:1400, margin:"0 auto" }}
           >
             {activeTab==="dashboard"  && <DashboardTab/>}
-            {activeTab==="editor"     && <EditorTab/>}
-            {activeTab==="generator"  && <ClipGeneratorTab/>}
-            {activeTab==="streamers"  && <StreamersTab/>}
-            {activeTab==="pipeline"   && <PipelineTab/>}
+            {activeTab==="generator"  && <ClipStudioTab/>}
+            {activeTab==="streamers"  && <AutoMonitorTab/>}
             {activeTab==="clips"      && <ClipsTab/>}
             {activeTab==="uploads"    && <UploadsTab/>}
             {activeTab==="settings"   && <SettingsTab/>}
