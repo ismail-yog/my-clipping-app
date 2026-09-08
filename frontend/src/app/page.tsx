@@ -24,15 +24,17 @@ function BlossomFlower({ size = 28, color = "#f4a8c0", cx = "#fff", opacity = 1,
       {Array.from({ length: petals }).map((_, i) => {
         const angle = (i / petals) * 360;
         const rad = (angle * Math.PI) / 180;
-        const px = r + Math.cos(rad) * pr * 0.85;
-        const py = r + Math.sin(rad) * pr * 0.85;
+        const px = Number((r + Math.cos(rad) * pr * 0.85).toFixed(3));
+        const py = Number((r + Math.sin(rad) * pr * 0.85).toFixed(3));
+        const rx = Number((pr * 0.7).toFixed(3));
+        const ry = Number((pr * 0.48).toFixed(3));
         return (
-          <ellipse key={i} cx={px} cy={py} rx={pr * 0.7} ry={pr * 0.48}
+          <ellipse key={i} cx={px} cy={py} rx={rx} ry={ry}
             fill={color} transform={`rotate(${angle + 90},${px},${py})`} opacity={0.92} />
         );
       })}
-      <circle cx={r} cy={r} r={r * 0.22} fill={cx} opacity={0.95} />
-      <circle cx={r} cy={r} r={r * 0.12} fill="#f9d0a0" opacity={0.9} />
+      <circle cx={Number(r.toFixed(3))} cy={Number(r.toFixed(3))} r={Number((r * 0.22).toFixed(3))} fill={cx} opacity={0.95} />
+      <circle cx={Number(r.toFixed(3))} cy={Number(r.toFixed(3))} r={Number((r * 0.12).toFixed(3))} fill="#f9d0a0" opacity={0.9} />
     </svg>
   );
 }
