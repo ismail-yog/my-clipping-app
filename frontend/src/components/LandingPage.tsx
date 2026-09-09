@@ -58,6 +58,8 @@ export default function LandingPage({ onAuthenticated }: LandingPageProps) {
     }
   }, []);
 
+  const lastInitializedClientId = useRef<string | null>(null);
+
   // Initialize Google Identity Services when modal opens and GSI is ready
   useEffect(() => {
     if (!showAuthModal || !gsiLoaded || typeof window === "undefined") return;
@@ -65,29 +67,32 @@ export default function LandingPage({ onAuthenticated }: LandingPageProps) {
     if (!google?.accounts?.id) return;
 
     try {
-      google.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: async (response: any) => {
-          if (response?.credential) {
-            setLoading(true);
-            setError(null);
-            try {
-              const res = await loginGoogle(response.credential);
-              if (res?.token) {
-                localStorage.setItem("synclip_jwt", res.token);
+      if (lastInitializedClientId.current !== googleClientId) {
+        google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: async (response: any) => {
+            if (response?.credential) {
+              setLoading(true);
+              setError(null);
+              try {
+                const res = await loginGoogle(response.credential);
+                if (res?.token) {
+                  localStorage.setItem("synclip_jwt", res.token);
+                }
+                onAuthenticated(res.user);
+              } catch (err: any) {
+                setError(err.message || "Google authentication failed.");
+              } finally {
+                setLoading(false);
               }
-              onAuthenticated(res.user);
-            } catch (err: any) {
-              setError(err.message || "Google authentication failed.");
-            } finally {
-              setLoading(false);
             }
-          }
-        },
-        auto_select: false,
-        cancel_on_tap_outside: true,
-        use_fedcm_for_prompt: false,
-      });
+          },
+          auto_select: false,
+          cancel_on_tap_outside: true,
+          use_fedcm_for_prompt: false,
+        });
+        lastInitializedClientId.current = googleClientId;
+      }
 
       if (googleBtnRef.current) {
         googleBtnRef.current.innerHTML = "";
