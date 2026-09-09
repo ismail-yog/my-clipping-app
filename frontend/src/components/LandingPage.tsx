@@ -374,6 +374,12 @@ export default function LandingPage({ onAuthenticated }: LandingPageProps) {
                 </svg>
                 <span>Continue with Google</span>
               </button>
+
+              <div className="mt-2 text-center">
+                <p className="text-[10px] text-[#a06070] leading-tight">
+                  Requires OAuth Client ID (type <b>Web Application</b>) with origin <code className="bg-black/5 px-1 py-0.2 rounded font-mono text-[9px]">http://localhost:3000</code>.
+                </p>
+              </div>
             </div>
           </div>
         </div>
