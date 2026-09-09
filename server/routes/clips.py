@@ -11,7 +11,8 @@ from server.deps import get_db, get_pipeline_manager, get_task_queue
 
 import config
 
-logger = logging.getLogger("streamclipper.api.clips")
+from server.routes.user_auth import get_current_user_optional
+
 router = APIRouter()
 
 
@@ -21,9 +22,11 @@ async def list_clips(
     streamer: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     db = get_db()
-    clips = db.get_clips(status=status, streamer=streamer, limit=limit, offset=offset)
+    uid = current_user["id"] if current_user else None
+    clips = db.get_clips(status=status, streamer=streamer, user_id=uid, limit=limit, offset=offset)
     return {"clips": clips}
 
 
@@ -32,11 +35,12 @@ class BatchClipsRequest(BaseModel):
 
 
 @router.get("/clips/upload_queue")
-async def get_upload_queue():
+async def get_upload_queue(current_user: Optional[dict] = Depends(get_current_user_optional)):
     """Retrieve all clips in the upload queue (approved or uploading), strictly excluding uploaded."""
     db = get_db()
-    clips = db.get_clips(status="approved", limit=100)
-    uploading = db.get_clips(status="uploading", limit=50)
+    uid = current_user["id"] if current_user else None
+    clips = db.get_clips(status="approved", user_id=uid, limit=100)
+    uploading = db.get_clips(status="uploading", user_id=uid, limit=50)
     all_queued = uploading + [c for c in clips if c["clip_id"] not in {u["clip_id"] for u in uploading}]
     # Strictly exclude any already uploaded clips
     all_queued = [c for c in all_queued if c.get("status") != "uploaded"]

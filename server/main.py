@@ -171,10 +171,11 @@ async def root():
     return {"message": "StreamClipper API is running", "timestamp": time.time()}
 
 
-from server.routes import auth, settings, ws, status, streamers, clips, uploads, jobs, vod, dreamteam
+from server.routes import auth, settings, ws, status, streamers, clips, uploads, jobs, vod, dreamteam, user_auth
 
 # ── Include Modular Sub-Routers ─────────────────────────────────────────────
 
+app.include_router(user_auth.router, prefix="/api", tags=["User Authentication"])
 app.include_router(ws.router, tags=["WebSocket"])
 app.include_router(status.router, prefix="/api", tags=["Status"])
 app.include_router(streamers.router, prefix="/api", tags=["Streamers"])
@@ -182,7 +183,7 @@ app.include_router(clips.router, prefix="/api", tags=["Clips"])
 app.include_router(uploads.router, prefix="/api", tags=["Uploads"])
 app.include_router(jobs.router, prefix="/api", tags=["Jobs"])
 app.include_router(vod.router, prefix="/api/vod", tags=["VOD"])
-app.include_router(auth.router, prefix="/api", tags=["Auth"])
+app.include_router(auth.router, prefix="/api", tags=["YouTube OAuth"])
 app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(dreamteam.router, prefix="/api/dreamteam", tags=["Dream Team"])
 

@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { connectWebSocket, StatusUpdate } from "@/lib/ws";
-import { getStatus } from "@/lib/api";
+import { getStatus, getCurrentUser, logoutUser } from "@/lib/api";
 
+import LandingPage from "@/components/LandingPage";
 import DashboardTab from "@/components/tabs/DashboardTab";
 import ClipStudioTab from "@/components/tabs/ClipStudioTab";
 import AutoMonitorTab from "@/components/tabs/AutoMonitorTab";
@@ -165,13 +166,32 @@ const NAV_ITEMS = [
 ];
 
 export default function SynclipDashboard() {
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
   const [activeTab, setActiveTab] = useState("dashboard");
   const [navKey, setNavKey] = useState(0);
   const [connected, setConnected] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [vodProgress, setVodProgress] = useState<Record<string, unknown>>({});
 
+  // 1. Initial Authentication Check
   useEffect(() => {
+    getCurrentUser()
+      .then((res) => {
+        if (res?.user) {
+          setCurrentUser(res.user);
+        } else {
+          setCurrentUser(null);
+        }
+      })
+      .catch(() => setCurrentUser(null))
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  // 2. Studio WebSockets & Live Stats
+  useEffect(() => {
+    if (!currentUser) return;
     const ws = connectWebSocket((data: StatusUpdate) => {
       setConnected(true);
       setPendingCount(data.pending_review);
@@ -185,9 +205,33 @@ export default function SynclipDashboard() {
       })
       .catch(() => setConnected(false));
     return () => { if (ws) ws.close(); };
-  }, []);
+  }, [currentUser]);
+
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+      localStorage.removeItem("synclip_jwt");
+      setCurrentUser(null);
+    } catch (e) {
+      localStorage.removeItem("synclip_jwt");
+      setCurrentUser(null);
+    }
+  };
 
   const navigate = (id: string) => { setActiveTab(id); setNavKey(k => k+1); };
+
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-[#fdf6f4] flex items-center justify-center">
+        <div className="size-8 rounded-full border-2 border-[#f4a8c0] border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
+  // If unauthenticated, render Public Landing Page
+  if (!currentUser) {
+    return <LandingPage onAuthenticated={(user) => setCurrentUser(user)} />;
+  }
 
   return (
     <div style={{ height:"100vh", overflow:"hidden", display:"flex", flexDirection:"column", position:"relative", background:"#fdf6f4" }}>
@@ -231,6 +275,25 @@ export default function SynclipDashboard() {
               </button>
             );
           })}
+        </div>
+
+        {/* User Profile Pill & Logout */}
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginRight:10 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,0.8)", border:"1px solid rgba(220,180,190,0.4)", borderRadius:20, padding:"4px 10px" }}>
+            <div style={{ width:18, height:18, borderRadius:"50%", background:"#f4a8c0", display:"flex", alignItems:"center", justifyContent:"center", color:"white", fontSize:10, fontWeight:800 }}>
+              {(currentUser?.display_name || currentUser?.email || "U")[0].toUpperCase()}
+            </div>
+            <span style={{ fontSize:11, fontWeight:600, color:"#8b2252", maxWidth:100, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+              {currentUser?.display_name || currentUser?.email}
+            </span>
+          </div>
+          <button
+            onClick={handleLogout}
+            style={{ border:"none", background:"transparent", color:"#a06070", fontSize:11, fontWeight:600, cursor:"pointer", padding:"4px 8px" }}
+            title="Sign out of your studio"
+          >
+            Sign Out
+          </button>
         </div>
 
         {/* Live + connection indicator */}

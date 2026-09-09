@@ -9,8 +9,14 @@ async function fetchAPI<T = any>(path: string, options?: RequestInit): Promise<T
   const base = getApiBase();
   const url = `${base}${path}${path.includes("?") ? "&" : "?"}_t=${Date.now()}`;
   try {
+    const token = typeof window !== "undefined" ? localStorage.getItem("synclip_jwt") : null;
+    const authHeaders: Record<string, string> = {};
+    if (token) {
+      authHeaders["Authorization"] = `Bearer ${token}`;
+    }
     const res = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...options?.headers },
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...authHeaders, ...options?.headers },
       ...options,
     });
     if (!res.ok) {
@@ -23,6 +29,22 @@ async function fetchAPI<T = any>(path: string, options?: RequestInit): Promise<T
     throw e;
   }
 }
+
+// ── User Authentication ──────────────────────────────────
+export const registerUser = (data: { email: string; password: string; display_name?: string }) =>
+  fetchAPI("/api/auth/register", { method: "POST", body: JSON.stringify(data) });
+
+export const loginUser = (data: { email: string; password: string }) =>
+  fetchAPI("/api/auth/login", { method: "POST", body: JSON.stringify(data) });
+
+export const loginGoogle = (credential: string) =>
+  fetchAPI("/api/auth/google", { method: "POST", body: JSON.stringify({ credential }) });
+
+export const getCurrentUser = () =>
+  fetchAPI("/api/auth/me");
+
+export const logoutUser = () =>
+  fetchAPI("/api/auth/logout", { method: "POST" });
 
 // ── Status & Control ──────────────────────────────────────
 export const getStatus = () => fetchAPI("/api/status");

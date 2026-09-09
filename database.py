@@ -105,6 +105,18 @@ CREATE TABLE IF NOT EXISTS jobs (
     scheduled_for REAL
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT NOT NULL UNIQUE,
+    hashed_pw     TEXT NOT NULL,
+    display_name  TEXT DEFAULT '',
+    avatar_url    TEXT DEFAULT '',
+    auth_provider TEXT NOT NULL DEFAULT 'email',
+    created_at    REAL NOT NULL,
+    updated_at    REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_clips_status ON clips(status);
 CREATE INDEX IF NOT EXISTS idx_clips_streamer ON clips(streamer_name);
 CREATE INDEX IF NOT EXISTS idx_clips_created ON clips(created_at);
@@ -211,16 +223,66 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
-            try:
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_account ON uploads(account_id)")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_clips_archetype ON clips(archetype)")
-            except sqlite3.OperationalError:
-                pass
+            # Auto-migrate: ensure user_id exists in streamers, sessions, clips, uploads
+            for tbl in ("streamers", "sessions", "clips", "uploads"):
+                try:
+                    conn.execute(f"ALTER TABLE {tbl} ADD COLUMN user_id INTEGER DEFAULT 1")
+                except sqlite3.OperationalError:
+                    pass
+                try:
+                    conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{tbl}_user ON {tbl}(user_id)")
+                except sqlite3.OperationalError:
+                    pass
 
             logger.debug("Schema initialized (v%d)", SCHEMA_VERSION)
+
+    # ── Users ───────────────────────────────────────────────────────────────
+
+    def create_user(
+        self,
+        email: str,
+        hashed_pw: str,
+        display_name: str = "",
+        avatar_url: str = "",
+        auth_provider: str = "email",
+    ) -> int:
+        """Create a new user account. Returns user ID."""
+        now = time.time()
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """INSERT INTO users (email, hashed_pw, display_name, avatar_url, auth_provider, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (email.strip().lower(), hashed_pw, display_name.strip(), avatar_url.strip(), auth_provider, now, now),
+            )
+            logger.info("User created: %s (id=%d, provider=%s)", email, cursor.lastrowid, auth_provider)
+            return cursor.lastrowid
+
+    def get_user_by_email(self, email: str) -> Optional[dict]:
+        """Fetch user by normalized email."""
+        with self._conn() as conn:
+            cursor = conn.execute("SELECT * FROM users WHERE LOWER(email) = LOWER(?)", (email.strip(),))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_user_by_id(self, user_id: int) -> Optional[dict]:
+        """Fetch user by numeric ID."""
+        with self._conn() as conn:
+            cursor = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_user(self, user_id: int, **kwargs) -> bool:
+        """Update user profile fields."""
+        allowed = {"display_name", "avatar_url", "hashed_pw", "updated_at"}
+        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        if not updates:
+            return False
+        updates["updated_at"] = time.time()
+        cols = ", ".join(f"{k} = ?" for k in updates)
+        vals = list(updates.values()) + [user_id]
+        with self._conn() as conn:
+            conn.execute(f"UPDATE users SET {cols} WHERE id = ?", vals)
+            return True
 
     # ── Streamers ───────────────────────────────────────────────────────────
 
@@ -356,6 +418,7 @@ class Database:
         auto_approve: bool = False,
         archetype: str = "",
         editorial_reasoning: str = "",
+        user_id: int = 1,
     ) -> int:
         """Save a new clip. Strictly dumps any clip with moment_score < 0.65."""
         if moment_score < 0.65:
@@ -370,15 +433,15 @@ class Database:
                 """INSERT INTO clips
                    (clip_id, session_id, streamer_name, platform, clip_path,
                     duration, moment_score, emotion, transcript, has_captions,
-                    status, archetype, editorial_reasoning, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    status, archetype, editorial_reasoning, user_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     clip_id, session_id, streamer_name, platform, clip_path,
                     duration, moment_score, emotion, transcript[:2000],
-                    int(has_captions), status, archetype, editorial_reasoning, now, now,
+                    int(has_captions), status, archetype, editorial_reasoning, user_id, now, now,
                 ),
             )
-            logger.info("Clip saved: %s (score=%.2f, status=%s, archetype=%s)", clip_id, moment_score, status, archetype or "None")
+            logger.info("Clip saved: %s (score=%.2f, status=%s, archetype=%s, user=%d)", clip_id, moment_score, status, archetype or "None", user_id)
             return cursor.lastrowid
 
     def update_clip_seo(
@@ -458,6 +521,7 @@ class Database:
         self,
         status: Optional[str] = None,
         streamer: Optional[str] = None,
+        user_id: Optional[int] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict]:
@@ -471,6 +535,9 @@ class Database:
         if streamer:
             query += " AND streamer_name = ?"
             params.append(streamer)
+        if user_id is not None:
+            query += " AND (user_id = ? OR user_id IS NULL OR user_id = 1)"
+            params.append(user_id)
 
         query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
