@@ -4,7 +4,7 @@ import time
 import logging
 from pathlib import Path
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional
 from server.deps import get_db, get_pipeline_manager, get_task_queue
