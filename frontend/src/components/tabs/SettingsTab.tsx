@@ -120,6 +120,7 @@ export default function SettingsTab() {
     upload_schedule_mode: "immediate",
     upload_peak_hours: ["12:00", "16:00", "20:00"] as string[],
     upload_stagger_minutes: 120,
+    google_client_id: "",
   });
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [saved, setSaved] = useState(false);
@@ -155,6 +156,7 @@ export default function SettingsTab() {
         upload_schedule_mode: d.upload_schedule_mode || prev.upload_schedule_mode,
         upload_peak_hours: d.upload_peak_hours && d.upload_peak_hours.length > 0 ? d.upload_peak_hours : prev.upload_peak_hours,
         upload_stagger_minutes: d.upload_stagger_minutes ?? prev.upload_stagger_minutes,
+        google_client_id: d.google_client_id ?? prev.google_client_id ?? "",
       }));
     } catch (e: any) {
       console.error("Failed to fetch settings:", e);
@@ -601,6 +603,69 @@ export default function SettingsTab() {
               display={String(settings.parallel_renders)}
               onChange={(v) => setSettings({ ...settings, parallel_renders: v })}
             />
+          </div>
+        </div>
+
+        {/* ═══ Row 1.5: Google Sign-In & Web OAuth ═══ */}
+        <div className={CARD}>
+          <div className="shimmer-active" />
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-[#9b59b6]" />
+              <p className={SECTION_LABEL}>GOOGLE SIGN-IN &amp; WEB OAUTH</p>
+            </div>
+            {settings.google_client_id ? (
+              <span className="text-[9px] font-mono font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" /> CONFIGURED
+              </span>
+            ) : (
+              <span className="text-[9px] font-mono font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                <AlertCircle className="w-2.5 h-2.5 text-amber-600" /> NOT SET
+              </span>
+            )}
+          </div>
+
+          <div className="pt-4 space-y-4">
+            <div className={`${INNER_ROW} space-y-3`}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div>
+                  <span className={BODY_TEXT}>Google OAuth 2.0 Web Client ID</span>
+                  <p className={MUTED_TEXT}>Powers Google Identity Services for user accounts and isolated clipping vaults</p>
+                </div>
+                {settings.google_client_id !== "781306653779-euaoqhmellgoq5dl4v3h4b355rieu3qv.apps.googleusercontent.com" && (
+                  <button
+                    type="button"
+                    onClick={() => setSettings((prev) => ({ ...prev, google_client_id: "781306653779-euaoqhmellgoq5dl4v3h4b355rieu3qv.apps.googleusercontent.com" }))}
+                    className="text-[11px] font-mono text-[#9b59b6] hover:underline cursor-pointer"
+                  >
+                    Reset to Default Client ID
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. 781306653779-xxxxxx.apps.googleusercontent.com"
+                  value={settings.google_client_id || ""}
+                  onChange={(e) => setSettings({ ...settings, google_client_id: e.target.value.trim() })}
+                  className="w-full bg-white/80 border border-[rgba(220,180,190,0.4)] rounded-[10px] px-3.5 py-2.5 text-[12px] text-[#1a0a10] font-mono placeholder:text-[#c0a0a8] focus:outline-none focus:border-[#c084cc] focus:ring-1 focus:ring-[#c084cc]"
+                />
+              </div>
+
+              <div className="bg-[rgba(255,255,255,0.7)] border border-[rgba(220,180,190,0.3)] rounded-[10px] p-3.5 text-[11px] text-[#805060] space-y-2 leading-relaxed">
+                <div className="flex items-center gap-1.5 font-bold text-[#3a1020]">
+                  <ExternalLink className="w-3.5 h-3.5 text-[#9b59b6]" />
+                  <span>Production Google Cloud Setup Directives:</span>
+                </div>
+                <ol className="list-decimal list-inside space-y-1 pl-1 text-[11px]">
+                  <li>Navigate to Google Cloud Console → <b>APIs &amp; Services</b> → <b>Credentials</b>.</li>
+                  <li>Create or select an <b>OAuth 2.0 Client ID</b> configured as a <b>Web application</b>.</li>
+                  <li>Under <b>Authorized JavaScript origins</b>, add both <code className="bg-black/5 px-1.5 py-0.5 rounded font-mono text-[10px] text-[#8b2252]">http://localhost:3000</code> and your live production domain (e.g. <code className="bg-black/5 px-1.5 py-0.5 rounded font-mono text-[10px] text-[#8b2252]">https://yourdomain.com</code>).</li>
+                  <li>Paste the Client ID here and click <b>Save System Settings</b> below. Changes apply instantly across the platform.</li>
+                </ol>
+              </div>
+            </div>
           </div>
         </div>
 

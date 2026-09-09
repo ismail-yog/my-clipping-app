@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
-import { loginUser, registerUser, loginGoogle } from "@/lib/api";
+import React, { useState, useEffect, useRef } from "react";
+import { loginUser, registerUser, loginGoogle, getSettings } from "@/lib/api";
 
 interface LandingPageProps {
   onAuthenticated: (user: any) => void;
 }
+
+const DEFAULT_GOOGLE_CLIENT_ID = "781306653779-euaoqhmellgoq5dl4v3h4b355rieu3qv.apps.googleusercontent.com";
 
 export default function LandingPage({ onAuthenticated }: LandingPageProps) {
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -15,6 +17,93 @@ export default function LandingPage({ onAuthenticated }: LandingPageProps) {
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState<string>(DEFAULT_GOOGLE_CLIENT_ID);
+  const [gsiLoaded, setGsiLoaded] = useState(false);
+  const googleBtnRef = useRef<HTMLDivElement>(null);
+
+  // Fetch configured Google Client ID from backend settings
+  useEffect(() => {
+    getSettings()
+      .then((d) => {
+        if (d?.google_client_id?.trim()) {
+          setGoogleClientId(d.google_client_id.trim());
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Dynamically load Google Identity Services script
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if ((window as any).google?.accounts?.id) {
+      setGsiLoaded(true);
+      return;
+    }
+
+    const existingScript = document.getElementById("google-gsi-script");
+    if (!existingScript) {
+      const script = document.createElement("script");
+      script.id = "google-gsi-script";
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      script.onload = () => setGsiLoaded(true);
+      script.onerror = () => {
+        console.warn("Failed to load Google Identity Services script.");
+      };
+      document.head.appendChild(script);
+    } else {
+      existingScript.addEventListener("load", () => setGsiLoaded(true));
+    }
+  }, []);
+
+  // Initialize Google Identity Services when modal opens and GSI is ready
+  useEffect(() => {
+    if (!showAuthModal || !gsiLoaded || typeof window === "undefined") return;
+    const google = (window as any).google;
+    if (!google?.accounts?.id) return;
+
+    try {
+      google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: async (response: any) => {
+          if (response?.credential) {
+            setLoading(true);
+            setError(null);
+            try {
+              const res = await loginGoogle(response.credential);
+              if (res?.token) {
+                localStorage.setItem("synclip_jwt", res.token);
+              }
+              onAuthenticated(res.user);
+            } catch (err: any) {
+              setError(err.message || "Google authentication failed.");
+            } finally {
+              setLoading(false);
+            }
+          }
+        },
+        auto_select: false,
+        cancel_on_tap_outside: true,
+      });
+
+      if (googleBtnRef.current) {
+        googleBtnRef.current.innerHTML = "";
+        google.accounts.id.renderButton(googleBtnRef.current, {
+          type: "standard",
+          shape: "pill",
+          theme: "outline",
+          text: "continue_with",
+          size: "large",
+          logo_alignment: "left",
+          width: 360,
+        });
+      }
+    } catch (e: any) {
+      console.warn("Error initializing Google Identity:", e);
+    }
+  }, [showAuthModal, gsiLoaded, googleClientId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,9 +126,23 @@ export default function LandingPage({ onAuthenticated }: LandingPageProps) {
     }
   };
 
-  const handleMockGoogleLogin = () => {
-    // Standard mock token for testing environments or prompt for Google token
-    setError("Google Sign-In ready. In production, configure Google Client ID in settings.");
+  const handleManualGoogleClick = () => {
+    setError(null);
+    const google = typeof window !== "undefined" ? (window as any).google : null;
+    if (google?.accounts?.id) {
+      try {
+        google.accounts.id.prompt((notification: any) => {
+          if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
+            // Prompt was suppressed or blocked; fallback to informing user to use the rendered button
+            setError("Please click the 'Continue with Google' button directly above.");
+          }
+        });
+      } catch (e: any) {
+        setError(e.message || "Google authentication failed. Please configure Client ID in settings.");
+      }
+    } else {
+      setError("Google Sign-In is initializing. Please verify accounts.google.com is accessible.");
+    }
   };
 
   return (
@@ -253,20 +356,25 @@ export default function LandingPage({ onAuthenticated }: LandingPageProps) {
               <div className="flex-1 border-t border-[rgba(220,180,190,0.3)]" />
             </div>
 
-            {/* Google OAuth Button */}
-            <button
-              type="button"
-              onClick={handleMockGoogleLogin}
-              className="w-full py-2.5 rounded-xl border border-[rgba(220,180,190,0.4)] bg-white hover:bg-gray-50 text-xs font-bold text-[#1a0a10] flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
-            >
-              <svg className="size-4" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-              </svg>
-              <span>Continue with Google</span>
-            </button>
+            {/* Google Identity Services Container */}
+            <div className="flex flex-col items-center gap-2">
+              <div ref={googleBtnRef} className="w-full flex justify-center min-h-[44px]" />
+
+              {/* Fallback button if Google GSI iframe is still initializing or blocked */}
+              <button
+                type="button"
+                onClick={handleManualGoogleClick}
+                className="w-full py-2.5 rounded-xl border border-[rgba(220,180,190,0.4)] bg-white hover:bg-gray-50 text-xs font-bold text-[#1a0a10] flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
+              >
+                <svg className="size-4" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                </svg>
+                <span>Continue with Google</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

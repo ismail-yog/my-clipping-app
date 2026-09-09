@@ -26,6 +26,7 @@ class SettingsUpdate(BaseModel):
     upload_schedule_mode: str = "immediate"  # "immediate", "peak_hours", "stagger"
     upload_peak_hours: List[str] = ["12:00", "16:00", "20:00"]
     upload_stagger_minutes: int = 120
+    google_client_id: Optional[str] = ""
 
 @router.get("")
 async def get_settings():
@@ -45,6 +46,7 @@ async def get_settings():
         "upload_schedule_mode": "immediate",
         "upload_peak_hours": ["12:00", "16:00", "20:00"],
         "upload_stagger_minutes": 120,
+        "google_client_id": "781306653779-euaoqhmellgoq5dl4v3h4b355rieu3qv.apps.googleusercontent.com",
     }
     
     # Override with what's actually in settings.json if present
