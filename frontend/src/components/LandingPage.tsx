@@ -7,7 +7,7 @@ interface LandingPageProps {
   onAuthenticated: (user: any) => void;
 }
 
-const DEFAULT_GOOGLE_CLIENT_ID = "781306653779-euaoqhmellgoq5dl4v3h4b355rieu3qv.apps.googleusercontent.com";
+const DEFAULT_GOOGLE_CLIENT_ID = "189266055979-qfumt6us473aqcsp55u1g1ggt52s9f6m.apps.googleusercontent.com";
 
 export default function LandingPage({ onAuthenticated }: LandingPageProps) {
   const [showAuthModal, setShowAuthModal] = useState(false);

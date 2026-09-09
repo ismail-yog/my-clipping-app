@@ -632,10 +632,10 @@ export default function SettingsTab() {
                   <span className={BODY_TEXT}>Google OAuth 2.0 Web Client ID</span>
                   <p className={MUTED_TEXT}>Powers Google Identity Services for user accounts and isolated clipping vaults</p>
                 </div>
-                {settings.google_client_id !== "781306653779-euaoqhmellgoq5dl4v3h4b355rieu3qv.apps.googleusercontent.com" && (
+                {settings.google_client_id !== "189266055979-qfumt6us473aqcsp55u1g1ggt52s9f6m.apps.googleusercontent.com" && (
                   <button
                     type="button"
-                    onClick={() => setSettings((prev) => ({ ...prev, google_client_id: "781306653779-euaoqhmellgoq5dl4v3h4b355rieu3qv.apps.googleusercontent.com" }))}
+                    onClick={() => setSettings((prev) => ({ ...prev, google_client_id: "189266055979-qfumt6us473aqcsp55u1g1ggt52s9f6m.apps.googleusercontent.com" }))}
                     className="text-[11px] font-mono text-[#9b59b6] hover:underline cursor-pointer"
                   >
                     Reset to Default Client ID

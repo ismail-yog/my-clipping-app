@@ -46,7 +46,7 @@ async def get_settings():
         "upload_schedule_mode": "immediate",
         "upload_peak_hours": ["12:00", "16:00", "20:00"],
         "upload_stagger_minutes": 120,
-        "google_client_id": "781306653779-euaoqhmellgoq5dl4v3h4b355rieu3qv.apps.googleusercontent.com",
+        "google_client_id": "189266055979-qfumt6us473aqcsp55u1g1ggt52s9f6m.apps.googleusercontent.com",
     }
     
     # Override with what's actually in settings.json if present
